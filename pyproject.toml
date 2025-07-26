@@ -1,0 +1,16 @@
+[project]
+name = "cybersec-advisory-system"
+version = "0.1.0"
+description = "Multi-Agent Cybersecurity Advisory System with LangGraph, Langfuse, and MCP integration"
+authors = [
+    {name = "Daniel Andersson",email = "daniel.andersson311@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
