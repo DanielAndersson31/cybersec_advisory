@@ -1,0 +1,53 @@
+# Cybersecurity Multi-Agent Advisory System
+
+## Python Standards
+
+- Use Python 3.11+ with full type hints
+- Use async/await for all I/O operations
+- Prefer Poetry over pip for dependency management
+- Use Pydantic v2 for data validation
+- Keep functions under 50 lines when possible
+
+## Architecture Patterns
+
+- Agents go in agents/ (business logic), workflow in workflow/ (orchestration)
+- Use @observe() decorator for all agent methods (Langfuse tracing)
+- Inherit from BaseSecurityAgent for all cybersecurity agents
+- Use MCP client for external tool access, never direct API calls
+- Follow LangGraph StateGraph patterns for multi-agent workflows
+
+## Code Quality
+
+- Use Black formatter with 88-character line limit
+- Use Ruff for linting
+- Always handle exceptions in tool calls and API requests
+- Use descriptive variable names (no abbreviations)
+- Add docstrings for all public methods
+
+## Security Practices
+
+- Never hardcode API keys or secrets (use environment variables)
+- Sanitize all user inputs before processing
+- Don't log sensitive data or conversation content
+- Use structured error messages (don't expose internals)
+
+## Agent Personality Guidelines
+
+- Sarah Chen (Incident Response): Direct, action-focused responses
+- Alex Rodriguez (Prevention): Strategic, methodical recommendations
+- Dr. Kim Park (Threat Intel): Analytical, detail-oriented analysis
+- Maria Santos (Compliance): Process-oriented, regulatory-focused guidance
+
+## File Organization
+
+- Keep MCP tools in mcp/tools/, servers in mcp/servers/
+- Domain knowledge goes in knowledge/domain_knowledge/
+- Use **init**.py files for clean package imports
+- Separate test files by component type (test_agents/, test_mcp/, etc.)
+
+## Testing Requirements
+
+- Write unit tests for all agent classes
+- Test MCP tool integration separately
+- Include integration tests for complete workflows
+- Mock external APIs in tests
