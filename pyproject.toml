@@ -1,16 +1,47 @@
-[project]
+[tool.poetry]
 name = "cybersec-advisory-system"
 version = "0.1.0"
 description = "Multi-Agent Cybersecurity Advisory System with LangGraph, Langfuse, and MCP integration"
-authors = [
-    {name = "Daniel Andersson",email = "daniel.andersson311@gmail.com"}
-]
+authors = ["Daniel Andersson <daniel.andersson311@gmail.com>"]
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = [
-]
+package-mode = false
 
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+
+# Core Configuration
+pydantic = ">=2.10.0"
+pydantic-settings = ">=2.6.0"
+python-dotenv = ">=1.0.0"
+
+# LLM & AI Framework
+langchain = ">=0.3.0"
+langchain-openai = ">=0.3.0"
+langgraph = ">=0.3.27"
+openai = ">=1.50.0"
+
+# Observability
+langfuse = ">=3.0.0"
+
+# Database
+psycopg2-binary = ">=2.9.0"
+asyncpg = ">=0.29.0"
+
+# Vector Database
+qdrant-client = ">=1.7.0"
+
+# Web Framework
+fastapi = ">=0.100.0"
+uvicorn = ">=0.26.0"
+
+# Utilities
+aiofiles = ">=24.0.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0.0"
+black = ">=24.0.0"
+ruff = ">=0.6.0"
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
+requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
