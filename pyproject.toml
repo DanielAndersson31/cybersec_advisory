@@ -36,6 +36,8 @@ uvicorn = ">=0.26.0"
 
 # Utilities
 aiofiles = ">=24.0.0"
+fastmcp = "^2.10.6"
+tavily-python = "^0.7.10"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0.0"
