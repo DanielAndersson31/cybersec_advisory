@@ -119,7 +119,7 @@ class WebSearchTool:
         if search_type == "general":
             return f"cybersecurity {query}"
         elif search_type == "news":
-            return f"cybersecurity news {query} 2024"
+            return f"cybersecurity news {query} 2025"
         elif search_type == "research":
             return f"cybersecurity research {query}"
         
