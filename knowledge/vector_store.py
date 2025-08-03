@@ -1,12 +1,9 @@
-import os
 import uuid
 import logging
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
-from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_openai import OpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient, models
 
 from config.settings import QDRANT_HOST, QDRANT_API_KEY, OPENAI_API_KEY
@@ -26,44 +23,47 @@ class Document:
 
 class VectorStoreManager:
     """
-    Manages interactions with the Qdrant vector store using production-ready practices.
+    Manages interactions with the Qdrant vector store using OpenAI's embedding model.
     It handles multiple collections, one for each cybersecurity domain.
     """
-
     def __init__(self):
-        """Initializes the Qdrant client and the embedding model."""
+        """Initializes the Qdrant client and the OpenAI embedding model."""
         if not all([QDRANT_HOST, QDRANT_API_KEY, OPENAI_API_KEY]):
             logger.error("Required credentials for Qdrant or OpenAI are not set.")
             raise ValueError("Qdrant or OpenAI API credentials not found in environment.")
 
         self.client = QdrantClient(host=QDRANT_HOST, api_key=QDRANT_API_KEY)
-        self.embeddings = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_API_KEY)
-        logger.info("VectorStoreManager initialized with Qdrant client and OpenAI embeddings.")
+        
+        self.embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small", 
+            openai_api_key=OPENAI_API_KEY
+        )
+        
+        self.embedding_dim = 1536
+        
+        logger.info(f"VectorStoreManager initialized with OpenAI embeddings (dim: {self.embedding_dim})")
 
-    def create_collection_if_not_exists(self, collection_name: str, vector_size: int = 1536):
+    def create_collection_if_not_exists(self, collection_name: str):
         """
         Ensures a collection exists in Qdrant, creating it if necessary.
 
         Args:
             collection_name: The name for the collection.
-            vector_size: The dimension of the vectors (1536 for OpenAI's text-embedding-3-small).
         """
+        vector_size = self.embedding_dim
         try:
             collections_response = self.client.get_collections()
             existing_collections = [col.name for col in collections_response.collections]
             if collection_name not in existing_collections:
                 self.client.create_collection(
                     collection_name=collection_name,
-                    vectors_config=models.VectorParams(
-                        size=vector_size,
-                        distance=models.Distance.COSINE,
-                    ),
+                    vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE)
                 )
-                logger.info(f"Collection '{collection_name}' created successfully.")
+                logger.info(f"Collection '{collection_name}' created with vector size {vector_size}.")
             else:
                 logger.info(f"Collection '{collection_name}' already exists.")
         except Exception as e:
-            logger.exception(f"Failed to create or verify collection '{collection_name}': {e}")
+            logger.exception(f"Failed to verify or create collection '{collection_name}': {e}")
             raise
 
     def upsert_documents(self, collection_name: str, documents: List[Document]):
@@ -75,7 +75,7 @@ class VectorStoreManager:
             documents: A list of Document objects to upsert.
         """
         if not documents:
-            logger.warning(f"No documents provided to upsert for collection '{collection_name}'.")
+            logger.warning(f"No documents to upsert for collection '{collection_name}'.")
             return
 
         try:
@@ -86,13 +86,13 @@ class VectorStoreManager:
                 models.PointStruct(
                     id=doc.doc_id,
                     vector=vector,
-                    payload={"content": doc.content, "metadata": doc.metadata},
+                    payload={"content": doc.content, "metadata": doc.metadata}
                 )
                 for doc, vector in zip(documents, embedded_vectors)
             ]
 
             self.client.upsert(collection_name=collection_name, points=points, wait=True)
-            logger.info(f"Successfully upserted {len(points)} documents to collection '{collection_name}'.")
+            logger.info(f"Upserted {len(points)} documents to collection '{collection_name}'.")
         except Exception as e:
             logger.exception(f"Error upserting documents to '{collection_name}': {e}")
             raise
@@ -115,7 +115,7 @@ class VectorStoreManager:
                 collection_name=collection_name,
                 query_vector=query_embedding,
                 limit=k,
-                with_payload=True,
+                with_payload=True
             )
             
             formatted_results = [
@@ -123,10 +123,11 @@ class VectorStoreManager:
                     "doc_id": result.id,
                     "content": result.payload.get("content", ""),
                     "metadata": result.payload.get("metadata", {}),
-                    "score": result.score,
+                    "score": result.score
                 }
                 for result in search_results
             ]
+            
             logger.info(f"Search in '{collection_name}' returned {len(formatted_results)} results.")
             return formatted_results
         except Exception as e:

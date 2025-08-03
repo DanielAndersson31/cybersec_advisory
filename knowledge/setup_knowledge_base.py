@@ -2,7 +2,7 @@ import asyncio
 import os
 import pathlib
 import logging
-from langchain_community.document_loaders import DirectoryLoader, TextLoader
+from langchain_community.document_loaders import DirectoryLoader, TextLoader, PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from knowledge.vector_store import VectorStoreManager, Document
@@ -10,18 +10,36 @@ from knowledge.vector_store import VectorStoreManager, Document
 logger = logging.getLogger(__name__)
 
 def load_and_split_docs(path: str) -> list:
-    """Helper function to load from a directory and split docs."""
-    loader = DirectoryLoader(path, glob="**/*.txt", loader_cls=TextLoader, show_progress=True)
-    docs = loader.load()
+    """
+    Loads TXT and PDF files from a directory, splits them into chunks.
+
+    Args:
+        path: The path to the directory containing documents.
+
+    Returns:
+        A list of LangChain Document chunks.
+    """
+    all_docs = []
+    
+    txt_loader = DirectoryLoader(path, glob="**/*.txt", loader_cls=TextLoader, show_progress=True, use_multithreading=True)
+    all_docs.extend(txt_loader.load())
+
+    pdf_loader = DirectoryLoader(path, glob="**/*.pdf", loader_cls=PyPDFLoader, show_progress=True, use_multithreading=True)
+    all_docs.extend(pdf_loader.load())
+    
+    if not all_docs:
+        return []
+
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-    chunks = text_splitter.split_documents(docs)
-    logger.info(f"Loaded and split {len(docs)} documents into {len(chunks)} chunks from '{path}'.")
+    chunks = text_splitter.split_documents(all_docs)
+    logger.info(f"Loaded and split {len(all_docs)} documents into {len(chunks)} chunks from '{path}'.")
     return chunks
 
 async def main():
     """
-    Initializes and populates the knowledge base in Qdrant, creating a
-    separate collection for each cybersecurity knowledge domain.
+    Initializes and populates the knowledge base in Qdrant. This script finds
+    all supported documents in the domain knowledge folders, processes them,
+    and creates a separate Qdrant collection for each domain.
     """
     logger.info("Starting knowledge base setup process...")
     try:
@@ -29,7 +47,6 @@ async def main():
 
         knowledge_base_path = pathlib.Path(__file__).parent.parent / "knowledge" / "domain_knowledge"
 
-        # Map collection names to their source folder paths
         knowledge_domains = {
             "incident_response": knowledge_base_path / "incident_response_kb",
             "prevention": knowledge_base_path / "prevention_kb",
@@ -44,35 +61,25 @@ async def main():
 
             logger.info(f"Processing domain: '{name}'")
             
-            # 1. Ensure the collection exists
             store_manager.create_collection_if_not_exists(name)
 
-            # 2. Load and split documents using LangChain helpers
             langchain_docs = load_and_split_docs(str(path))
             
             if not langchain_docs:
-                logger.warning(f"No documents found or loaded for domain '{name}'.")
+                logger.warning(f"No processable documents (.txt, .pdf) found for domain '{name}'.")
                 continue
 
-            # 3. Convert to our structured Document class
             documents_to_upsert = [
                 Document(content=doc.page_content, metadata=doc.metadata)
                 for doc in langchain_docs
             ]
 
-            # 4. Upsert the documents into the domain's collection
             store_manager.upsert_documents(name, documents_to_upsert)
 
         logger.info("Knowledge base setup completed successfully!")
     except Exception as e:
         logger.exception("A critical error occurred during the knowledge base setup.")
-        # Re-raise the exception to ensure the script exits with an error code
         raise
 
-if __name__ == "__main__":
-    # If this script is the main entry point, it needs its own logging setup.
-    # Otherwise, this part can be removed if it's only ever imported.
-    from cybersec_team_ai.utils.logging_setup import setup_logging
-    setup_logging()
-    
+if __name__ == "__main__":    
     asyncio.run(main())

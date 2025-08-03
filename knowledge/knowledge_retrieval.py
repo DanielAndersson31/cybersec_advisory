@@ -9,7 +9,6 @@ class KnowledgeRetriever:
     Handles knowledge retrieval from the vector store for the agents,
     acting as a clean interface to the VectorStoreManager.
     """
-
     def __init__(self):
         """Initializes the retriever with a VectorStoreManager instance."""
         self.store_manager = VectorStoreManager()
@@ -28,8 +27,6 @@ class KnowledgeRetriever:
             A list of dictionaries, each containing a search result.
         """
         logger.info(f"Performing search in domain '{domain}' for query: '{query[:50]}...'")
-        # The collection name in Qdrant corresponds to the domain.
         return await self.store_manager.search(collection_name=domain, query=query, k=k)
 
-# Global instance for easy access by other parts of the application
 knowledge_retriever = KnowledgeRetriever()
