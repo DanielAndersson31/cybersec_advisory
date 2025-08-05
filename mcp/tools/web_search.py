@@ -4,7 +4,7 @@ Web search tool using Tavily API for cybersecurity queries.
 
 import os
 from typing import Dict, Any, List, Optional
-from tavily import TavilyClient
+from tavily import AsyncTavilyClient
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ class WebSearchTool:
         if not api_key:
             raise ValueError("TAVILY_API_KEY environment variable not set")
             
-        self.client = TavilyClient(api_key=api_key)
+        self.client = AsyncTavilyClient(api_key=api_key)
         
         # Trusted cybersecurity domains
         self.trusted_domains = [
@@ -72,7 +72,7 @@ class WebSearchTool:
             # Call Tavily API
             logger.info(f"Searching for: {enhanced_query}")
             
-            results = self.client.search(
+            results = await self.client.search(
                 query=enhanced_query,
                 max_results=max_results,
                 search_depth="basic" if search_type != "research" else "advanced",

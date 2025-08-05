@@ -4,7 +4,7 @@ Simple IOC analysis tool using VirusTotal API with Pydantic models.
 
 import os
 import re
-import requests
+import httpx
 from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 import logging
@@ -155,7 +155,8 @@ class IOCAnalysisTool:
                 )
             
             # Make request
-            response = requests.get(url, headers=headers)
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=headers)
             
             if response.status_code == 200:
                 data = response.json()

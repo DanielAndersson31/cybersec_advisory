@@ -1,9 +1,8 @@
 """
-Simplified compliance frameworks configuration.
-Essential regulatory information for cybersecurity compliance.
+Compliance frameworks configuration data.
+Pure configuration - no business logic.
 """
 
-from typing import Dict, List, Optional
 from enum import Enum
 from datetime import timedelta
 
@@ -18,7 +17,7 @@ class ComplianceFramework(Enum):
     NIST = "nist"
 
 
-# Breach notification timelines (most critical compliance info)
+# Breach notification timelines
 BREACH_TIMELINES = {
     ComplianceFramework.GDPR: {
         "authority": timedelta(hours=72),
@@ -31,19 +30,19 @@ BREACH_TIMELINES = {
         "threshold": "unsecured PHI"
     },
     ComplianceFramework.PCI_DSS: {
-        "authority": timedelta(hours=24),  # To card brands
-        "individuals": None,  # Determined by card brands
+        "authority": timedelta(hours=24),
+        "individuals": None,
         "threshold": "any cardholder data compromise"
     },
     ComplianceFramework.SOX: {
-        "authority": timedelta(days=4),  # Material events
+        "authority": timedelta(days=4),
         "individuals": None,
         "threshold": "material financial impact"
     }
 }
 
 
-# Key requirements summary (what agents need to know)
+# Framework requirements and details
 FRAMEWORK_REQUIREMENTS = {
     ComplianceFramework.GDPR: {
         "name": "General Data Protection Regulation",
@@ -100,7 +99,7 @@ FRAMEWORK_REQUIREMENTS = {
 }
 
 
-# Simple applicability check
+# Framework applicability mapping
 APPLICABILITY = {
     "by_data_type": {
         "personal_data": [ComplianceFramework.GDPR],
@@ -114,51 +113,3 @@ APPLICABILITY = {
         "Global": [ComplianceFramework.PCI_DSS, ComplianceFramework.ISO_27001]
     }
 }
-
-
-# Helper functions
-def get_breach_timeline(framework: ComplianceFramework, target: str = "authority") -> Optional[timedelta]:
-    """Get breach notification timeline"""
-    timelines = BREACH_TIMELINES.get(framework, {})
-    return timelines.get(target)
-
-
-def get_applicable_frameworks(data_type: Optional[str] = None, region: Optional[str] = None) -> List[ComplianceFramework]:
-    """Get frameworks that might apply"""
-    frameworks = set()
-    
-    if data_type and data_type in APPLICABILITY["by_data_type"]:
-        frameworks.update(APPLICABILITY["by_data_type"][data_type])
-    
-    if region and region in APPLICABILITY["by_region"]:
-        frameworks.update(APPLICABILITY["by_region"][region])
-    
-    return list(frameworks)
-
-
-def get_strictest_breach_timeline(frameworks: List[ComplianceFramework]) -> Optional[timedelta]:
-    """Get the shortest breach notification timeline"""
-    timelines = []
-    for fw in frameworks:
-        timeline = get_breach_timeline(fw, "authority")
-        if timeline:
-            timelines.append(timeline)
-    
-    return min(timelines) if timelines else None
-
-
-def get_framework_summary(framework: ComplianceFramework) -> Dict:
-    """Get summary information about a framework"""
-    return FRAMEWORK_REQUIREMENTS.get(framework, {})
-
-
-# Export
-__all__ = [
-    "ComplianceFramework",
-    "BREACH_TIMELINES",
-    "FRAMEWORK_REQUIREMENTS",
-    "get_breach_timeline",
-    "get_applicable_frameworks", 
-    "get_strictest_breach_timeline",
-    "get_framework_summary"
-]

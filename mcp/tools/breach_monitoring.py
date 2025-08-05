@@ -3,11 +3,10 @@ Simple breach monitoring tool using the 'Have I Been Pwned' (HIBP) API.
 """
 
 import os
-import requests
+import httpx
 from typing import List, Optional
 from pydantic import BaseModel
 import logging
-import time
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +68,8 @@ class BreachMonitoringTool:
         
         try:
             # Make the API request
-            api_response = requests.get(url, headers=headers)
+            async with httpx.AsyncClient() as client:
+                api_response = await client.get(url, headers=headers)
             
             # 404 means the email was not found in any breaches (a good thing)
             if api_response.status_code == 404:

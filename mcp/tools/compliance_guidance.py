@@ -1,300 +1,302 @@
 """
-Simple compliance guidance tool for cybersecurity incidents.
+Compliance guidance tool with all business logic.
+Uses configuration data from compliance_frameworks.
 """
 
-import sys
-import os
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 from pydantic import BaseModel
+from datetime import timedelta
 import logging
 
-# Add parent directory to path to import config
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-
-try:
-    from config.compliance_frameworks import (
-        ComplianceFramework,
-        get_applicable_frameworks,
-        get_strictest_breach_timeline,
-        get_framework_summary,
-        get_breach_timeline
-    )
-except ImportError:
-    # Fallback if import fails
-    logging.warning("Could not import compliance frameworks config")
-    ComplianceFramework = None
+# Import configuration data only
+from config.compliance_frameworks import (
+    ComplianceFramework,
+    BREACH_TIMELINES,
+    FRAMEWORK_REQUIREMENTS,
+    APPLICABILITY
+)
 
 logger = logging.getLogger(__name__)
 
 
 # Pydantic Models
-class ComplianceRecommendation(BaseModel):
-    """Individual compliance recommendation"""
+class BreachTimeline(BaseModel):
+    """Breach notification timeline information"""
+    authority_notification: Optional[str] = None
+    individual_notification: Optional[str] = None
+    threshold: str
+    strictest_deadline: Optional[str] = None
+
+
+class FrameworkGuidance(BaseModel):
+    """Guidance for a specific framework"""
     framework: str
-    framework_name: str
-    applies: bool
-    breach_notification_hours: Optional[int] = None
-    key_requirements: List[str] = []
-    max_penalty: str = "Unknown"
-    next_actions: List[str] = []
+    full_name: str
+    region: str
+    applies_to: str
+    key_requirements: List[str]
+    max_penalty: str
+    breach_timeline: BreachTimeline
+
+
+class ComplianceRecommendation(BaseModel):
+    """Compliance recommendations based on context"""
+    applicable_frameworks: List[str]
+    primary_framework: Optional[str] = None
+    strictest_breach_deadline: Optional[str] = None
+    immediate_actions: List[str] = []
+    key_considerations: List[str] = []
 
 
 class ComplianceGuidanceResponse(BaseModel):
     """Response model for compliance guidance"""
     status: str = "success"
-    query_context: str
-    applicable_frameworks: List[ComplianceRecommendation] = []
-    immediate_actions: List[str] = []
-    strictest_timeline_hours: Optional[int] = None
+    query: str
+    framework_guidance: Optional[FrameworkGuidance] = None
+    recommendations: Optional[ComplianceRecommendation] = None
+    all_applicable: List[str] = []
     error: Optional[str] = None
 
 
 class ComplianceGuidanceTool:
-    """Provide compliance guidance for cybersecurity incidents"""
+    """Provide compliance guidance with all business logic"""
     
     def __init__(self):
         """Initialize compliance guidance tool"""
-        if not ComplianceFramework:
-            logger.warning("Compliance frameworks not available - guidance will be limited")
+        self.frameworks = list(ComplianceFramework)
     
-    async def get_guidance(
+    # === Private Helper Methods ===
+    
+    def _get_breach_timeline(self, framework: ComplianceFramework, target: str = "authority") -> Optional[timedelta]:
+        """Get breach notification timeline"""
+        timelines = BREACH_TIMELINES.get(framework, {})
+        return timelines.get(target)
+    
+    def _get_applicable_frameworks(self, data_type: Optional[str] = None, region: Optional[str] = None) -> List[ComplianceFramework]:
+        """Get frameworks that might apply"""
+        frameworks = set()
+        
+        if data_type and data_type in APPLICABILITY["by_data_type"]:
+            frameworks.update(APPLICABILITY["by_data_type"][data_type])
+        
+        if region and region in APPLICABILITY["by_region"]:
+            frameworks.update(APPLICABILITY["by_region"][region])
+        
+        return list(frameworks)
+    
+    def _get_strictest_breach_timeline(self, frameworks: List[ComplianceFramework]) -> Optional[timedelta]:
+        """Get the shortest breach notification timeline"""
+        timelines = []
+        for fw in frameworks:
+            timeline = self._get_breach_timeline(fw, "authority")
+            if timeline:
+                timelines.append(timeline)
+        
+        return min(timelines) if timelines else None
+    
+    def _get_framework_summary(self, framework: ComplianceFramework) -> Dict:
+        """Get summary information about a framework"""
+        return FRAMEWORK_REQUIREMENTS.get(framework, {})
+    
+    # === Main Tool Methods ===
+    
+    def get_guidance(
         self,
-        incident_type: str = "data_breach",
-        data_types: Optional[List[str]] = None,
-        regions: Optional[List[str]] = None,
-        organization_type: Optional[str] = None
+        framework: Optional[str] = None,
+        data_type: Optional[str] = None,
+        region: Optional[str] = None,
+        incident_type: Optional[str] = None
     ) -> ComplianceGuidanceResponse:
         """
-        Get compliance guidance for a cybersecurity incident.
+        Get compliance guidance for specific framework or situation.
         
         Args:
-            incident_type: Type of incident (data_breach, ransomware, phishing, etc.)
-            data_types: Types of data involved (personal_data, health_data, payment_cards, financial_records)
-            regions: Geographic regions (EU, US, Global)
-            organization_type: Type of organization (healthcare, financial, public, private)
+            framework: Specific framework (GDPR, HIPAA, PCI-DSS, SOX)
+            data_type: Type of data (personal_data, health_data, payment_cards, financial_records)
+            region: Geographic region (EU, US, Global)
+            incident_type: Type of incident (breach, vulnerability, etc.)
             
         Returns:
-            ComplianceGuidanceResponse with applicable frameworks and timelines
+            ComplianceGuidanceResponse with guidance and recommendations
         """
         try:
-            if not ComplianceFramework:
-                return ComplianceGuidanceResponse(
-                    status="error",
-                    query_context=f"{incident_type} incident",
-                    error="Compliance frameworks configuration not available"
-                )
+            # If specific framework requested
+            if framework:
+                return self._get_framework_guidance(framework)
             
-            query_context = f"{incident_type} incident"
-            if data_types:
-                query_context += f" involving {', '.join(data_types)}"
-            if regions:
-                query_context += f" in {', '.join(regions)}"
+            # If data type or region provided, find applicable frameworks
+            if data_type or region:
+                return self._get_recommendations(data_type, region, incident_type)
             
-            # Determine applicable frameworks
-            applicable_frameworks = []
-            all_frameworks = set()
-            
-            # Check by data type
-            if data_types:
-                for data_type in data_types:
-                    frameworks = get_applicable_frameworks(data_type=data_type)
-                    all_frameworks.update(frameworks)
-            
-            # Check by region
-            if regions:
-                for region in regions:
-                    frameworks = get_applicable_frameworks(region=region)
-                    all_frameworks.update(frameworks)
-            
-            # If no specific criteria, check common frameworks
-            if not all_frameworks:
-                all_frameworks = {ComplianceFramework.GDPR, ComplianceFramework.HIPAA, 
-                                ComplianceFramework.PCI_DSS, ComplianceFramework.SOX}
-            
-            # Build recommendations for each framework
-            for framework in all_frameworks:
-                recommendation = self._build_recommendation(
-                    framework, incident_type, data_types, regions, organization_type
-                )
-                applicable_frameworks.append(recommendation)
-            
-            # Sort by applicability (most relevant first)
-            applicable_frameworks.sort(key=lambda x: x.applies, reverse=True)
-            
-            # Get strictest timeline
-            applying_frameworks = [fw for fw in all_frameworks 
-                                 if self._framework_applies(fw, data_types, regions, organization_type)]
-            strictest_timeline = get_strictest_breach_timeline(applying_frameworks)
-            strictest_hours = None
-            if strictest_timeline:
-                strictest_hours = int(strictest_timeline.total_seconds() / 3600)
-            
-            # Generate immediate actions
-            immediate_actions = self._get_immediate_actions(
-                incident_type, applying_frameworks, strictest_hours
-            )
-            
-            return ComplianceGuidanceResponse(
-                query_context=query_context,
-                applicable_frameworks=applicable_frameworks,
-                immediate_actions=immediate_actions,
-                strictest_timeline_hours=strictest_hours
-            )
+            # Return general compliance overview
+            return self._get_overview()
             
         except Exception as e:
             logger.error(f"Compliance guidance error: {str(e)}")
             return ComplianceGuidanceResponse(
                 status="error",
-                query_context=f"{incident_type} incident",
+                query=f"framework={framework}, data_type={data_type}, region={region}",
                 error=str(e)
             )
     
-    def _build_recommendation(
-        self,
-        framework,
-        incident_type: str,
-        data_types: Optional[List[str]],
-        regions: Optional[List[str]],
-        organization_type: Optional[str]
-    ) -> ComplianceRecommendation:
-        """Build compliance recommendation for a framework"""
-        summary = get_framework_summary(framework)
-        applies = self._framework_applies(framework, data_types, regions, organization_type)
-        
-        # Get breach notification timeline
-        timeline = get_breach_timeline(framework, "authority")
-        timeline_hours = None
-        if timeline:
-            timeline_hours = int(timeline.total_seconds() / 3600)
-        
-        # Generate next actions
-        next_actions = []
-        if applies and incident_type == "data_breach":
-            if timeline_hours:
-                if timeline_hours <= 24:
-                    next_actions.append(f"URGENT: Notify authorities within {timeline_hours} hours")
-                else:
-                    next_actions.append(f"Notify authorities within {timeline_hours // 24} days")
+    def _get_framework_guidance(self, framework_name: str) -> ComplianceGuidanceResponse:
+        """Get detailed guidance for a specific framework"""
+        try:
+            # Convert string to enum
+            fw_enum = ComplianceFramework(framework_name.lower())
             
-            next_actions.extend([
-                "Document the incident details",
-                "Assess scope of data involved",
-                "Prepare breach notification documentation"
-            ])
-        elif applies:
-            next_actions.extend([
-                "Review framework requirements",
-                "Document security controls",
-                "Assess compliance impact"
-            ])
+            # Get framework details
+            fw_info = self._get_framework_summary(fw_enum)
+            if not fw_info:
+                return ComplianceGuidanceResponse(
+                    status="error",
+                    query=framework_name,
+                    error=f"Framework {framework_name} not found"
+                )
+            
+            # Get breach timelines
+            breach_timeline = self._format_breach_timeline(fw_enum)
+            
+            # Create guidance
+            guidance = FrameworkGuidance(
+                framework=fw_enum.value.upper(),
+                full_name=fw_info["name"],
+                region=fw_info["region"],
+                applies_to=fw_info["applies_to"],
+                key_requirements=fw_info["key_points"],
+                max_penalty=fw_info["max_penalty"],
+                breach_timeline=breach_timeline
+            )
+            
+            return ComplianceGuidanceResponse(
+                query=framework_name,
+                framework_guidance=guidance,
+                all_applicable=[fw_enum.value.upper()]
+            )
+            
+        except ValueError:
+            return ComplianceGuidanceResponse(
+                status="error",
+                query=framework_name,
+                error=f"Unknown framework: {framework_name}"
+            )
+    
+    def _get_recommendations(
+        self, 
+        data_type: Optional[str], 
+        region: Optional[str],
+        incident_type: Optional[str]
+    ) -> ComplianceGuidanceResponse:
+        """Get recommendations based on data type and region"""
+        # Find applicable frameworks
+        applicable = self._get_applicable_frameworks(data_type, region)
         
-        return ComplianceRecommendation(
-            framework=framework.value,
-            framework_name=summary.get("name", framework.value.upper()),
-            applies=applies,
-            breach_notification_hours=timeline_hours,
-            key_requirements=summary.get("key_points", [])[:3],  # Top 3 requirements
-            max_penalty=summary.get("max_penalty", "Unknown"),
-            next_actions=next_actions
+        if not applicable:
+            return ComplianceGuidanceResponse(
+                query=f"data_type={data_type}, region={region}",
+                recommendations=ComplianceRecommendation(
+                    applicable_frameworks=[],
+                    key_considerations=["No specific frameworks identified for this scenario"]
+                )
+            )
+        
+        # Get strictest timeline if dealing with breach
+        strictest_timeline = None
+        if incident_type == "breach":
+            timeline = self._get_strictest_breach_timeline(applicable)
+            if timeline:
+                strictest_timeline = self._format_timedelta(timeline)
+        
+        # Determine primary framework (most restrictive)
+        primary = applicable[0] if applicable else None
+        
+        # Build recommendations
+        recommendations = ComplianceRecommendation(
+            applicable_frameworks=[fw.value.upper() for fw in applicable],
+            primary_framework=primary.value.upper() if primary else None,
+            strictest_breach_deadline=strictest_timeline
+        )
+        
+        # Add immediate actions for breach
+        if incident_type == "breach":
+            recommendations.immediate_actions = [
+                "Document the incident discovery time",
+                "Assess the scope and impact",
+                "Preserve evidence",
+                f"Prepare notifications (deadline: {strictest_timeline or 'check frameworks'})",
+                "Identify affected individuals/data"
+            ]
+        
+        # Add key considerations
+        for fw in applicable:
+            fw_info = self._get_framework_summary(fw)
+            if fw_info:
+                recommendations.key_considerations.extend(fw_info["key_points"][:2])
+        
+        return ComplianceGuidanceResponse(
+            query=f"data_type={data_type}, region={region}",
+            recommendations=recommendations,
+            all_applicable=[fw.value.upper() for fw in applicable]
         )
     
-    def _framework_applies(
-        self,
-        framework,
-        data_types: Optional[List[str]],
-        regions: Optional[List[str]],
-        organization_type: Optional[str]
-    ) -> bool:
-        """Determine if a framework applies to the situation"""
-        # Simple applicability logic
-        framework_mapping = {
-            ComplianceFramework.GDPR: {
-                "data_types": ["personal_data"],
-                "regions": ["EU"],
-                "org_types": ["any"]
-            },
-            ComplianceFramework.HIPAA: {
-                "data_types": ["health_data"],
-                "regions": ["US"],
-                "org_types": ["healthcare"]
-            },
-            ComplianceFramework.PCI_DSS: {
-                "data_types": ["payment_cards"],
-                "regions": ["any"],
-                "org_types": ["any"]
-            },
-            ComplianceFramework.SOX: {
-                "data_types": ["financial_records"],
-                "regions": ["US"],
-                "org_types": ["public"]
-            }
-        }
+    def _get_overview(self) -> ComplianceGuidanceResponse:
+        """Get general compliance overview"""
+        all_frameworks = [fw.value.upper() for fw in ComplianceFramework]
         
-        mapping = framework_mapping.get(framework, {})
+        recommendations = ComplianceRecommendation(
+            applicable_frameworks=all_frameworks,
+            key_considerations=[
+                "Identify what type of data you process",
+                "Determine your geographic scope",
+                "Assess which regulations apply",
+                "Implement appropriate controls",
+                "Maintain compliance documentation"
+            ]
+        )
         
-        # Check data types
-        if data_types and mapping.get("data_types") != ["any"]:
-            if not any(dt in mapping.get("data_types", []) for dt in data_types):
-                return False
-        
-        # Check regions
-        if regions and mapping.get("regions") != ["any"]:
-            if not any(region in mapping.get("regions", []) for region in regions):
-                return False
-        
-        # Check organization type
-        if organization_type and mapping.get("org_types") != ["any"]:
-            if organization_type not in mapping.get("org_types", []):
-                return False
-        
-        return True
+        return ComplianceGuidanceResponse(
+            query="overview",
+            recommendations=recommendations,
+            all_applicable=all_frameworks
+        )
     
-    def _get_immediate_actions(
-        self,
-        incident_type: str,
-        frameworks,
-        strictest_hours: Optional[int]
-    ) -> List[str]:
-        """Generate immediate action items"""
-        actions = []
+    def _format_breach_timeline(self, framework: ComplianceFramework) -> BreachTimeline:
+        """Format breach timeline information"""
+        timelines = BREACH_TIMELINES.get(framework, {})
         
-        # Time-critical actions first
-        if strictest_hours:
-            if strictest_hours <= 24:
-                actions.append(f"⚠️  URGENT: You have {strictest_hours} hours for regulatory notification")
-            else:
-                actions.append(f"📅 You have {strictest_hours // 24} days for regulatory notification")
+        authority = timelines.get("authority")
+        individuals = timelines.get("individuals")
         
-        # Common incident response actions
-        if incident_type == "data_breach":
-            actions.extend([
-                "🔒 Contain the breach and secure affected systems",
-                "📝 Document all incident details and timeline",
-                "🔍 Assess what data was accessed/exfiltrated",
-                "📞 Consider legal counsel for regulatory guidance"
-            ])
-        elif incident_type == "ransomware":
-            actions.extend([
-                "🚫 Do not pay ransom without legal consultation",
-                "💾 Preserve forensic evidence",
-                "📋 Check if personal data was accessed (triggers breach rules)"
-            ])
+        breach_timeline = BreachTimeline(
+            authority_notification=self._format_timedelta(authority) if authority else None,
+            individual_notification=self._format_timedelta(individuals) if individuals else None,
+            threshold=timelines.get("threshold", "Unknown")
+        )
+        
+        # Add strictest deadline
+        if authority:
+            breach_timeline.strictest_deadline = self._format_timedelta(authority)
+        
+        return breach_timeline
+    
+    def _format_timedelta(self, td: timedelta) -> str:
+        """Convert timedelta to readable string"""
+        total_seconds = int(td.total_seconds())
+        
+        if total_seconds < 3600:  # Less than an hour
+            return f"{total_seconds // 60} minutes"
+        elif total_seconds < 86400:  # Less than a day
+            return f"{total_seconds // 3600} hours"
         else:
-            actions.extend([
-                "📝 Document the incident",
-                "🔍 Assess potential compliance impact",
-                "📞 Consider regulatory consultation if unsure"
-            ])
-        
-        return actions
+            return f"{total_seconds // 86400} days"
 
 
 # Create singleton instance
 compliance_guidance_tool = ComplianceGuidanceTool()
 
 
-# Export function for MCP server integration
-async def get_compliance_guidance(**kwargs) -> dict:
+# Export function for compatibility
+def get_compliance_guidance(**kwargs) -> dict:
     """Compliance guidance function that MCP servers will import"""
-    response = await compliance_guidance_tool.get_guidance(**kwargs)
+    response = compliance_guidance_tool.get_guidance(**kwargs)
     return response.model_dump()

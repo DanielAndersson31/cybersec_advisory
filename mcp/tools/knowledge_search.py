@@ -4,7 +4,6 @@ Knowledge search tool for internal cybersecurity documentation and playbooks.
 
 from typing import Dict, Any, List, Optional
 import logging
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +25,7 @@ class KnowledgeSearchTool:
             "compliance"
         ]
     
-    async def search(
+    def search(
         self,
         query: str,
         categories: Optional[List[str]] = None,
@@ -218,6 +217,6 @@ knowledge_search_tool = KnowledgeSearchTool()
 
 
 # Export function for easy use
-async def knowledge_search(**kwargs) -> Dict[str, Any]:
+def knowledge_search(**kwargs) -> Dict[str, Any]:
     """Knowledge search function that MCP servers will import"""
-    return await knowledge_search_tool.search(**kwargs)
+    return knowledge_search_tool.search(**kwargs)

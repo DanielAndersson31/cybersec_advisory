@@ -3,7 +3,7 @@ Search for threat intelligence reports (Pulses) on AlienVault OTX.
 """
 
 import os
-import requests
+import httpx
 from typing import List, Optional
 from pydantic import BaseModel
 import logging
@@ -74,7 +74,8 @@ class ThreatFeedsTool:
 
         try:
             # Make the API request
-            api_response = requests.get(search_url, headers=headers, params=params)
+            async with httpx.AsyncClient() as client:
+                api_response = await client.get(search_url, headers=headers, params=params)
             
             if api_response.status_code != 200:
                 return ThreatFeedResponse(

@@ -3,7 +3,7 @@ Simple attack surface analysis tool using the ZoomEye API.
 """
 
 import os
-import requests
+import httpx
 from typing import List, Optional
 from pydantic import BaseModel
 import logging
@@ -65,7 +65,8 @@ class AttackSurfaceAnalyzerTool:
         
         try:
             # Make the API request
-            api_response = requests.get(url, headers=headers, params=params)
+            async with httpx.AsyncClient() as client:
+                api_response = await client.get(url, headers=headers, params=params)
             
             if api_response.status_code != 200:
                 return AttackSurfaceResponse(
