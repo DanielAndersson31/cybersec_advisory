@@ -1,6 +1,6 @@
 """
 Agent configuration settings for the cybersecurity multi-agent system.
-This file contains high-level configurations and mappings.
+This file contains high-level configurations, tool definitions, and mappings.
 Detailed implementations are in the agents/ folder.
 """
 
@@ -18,9 +18,8 @@ class AgentRole(Enum):
     COORDINATOR = "coordinator"
 
 
-# Agent basic configurations
 AGENT_CONFIGS = {
-    "incident_response": {
+    AgentRole.INCIDENT_RESPONSE: {
         "name": "Sarah Chen",
         "role": AgentRole.INCIDENT_RESPONSE,
         "model": settings.DEFAULT_MODEL,
@@ -32,7 +31,7 @@ AGENT_CONFIGS = {
         "interruption_threshold": 0.9,
         "enabled": True
     },
-    "prevention": {
+    AgentRole.PREVENTION: {
         "name": "Alex Rodriguez",
         "role": AgentRole.PREVENTION,
         "model": settings.DEFAULT_MODEL,
@@ -44,31 +43,31 @@ AGENT_CONFIGS = {
         "interruption_threshold": 0.7,
         "enabled": True
     },
-    "threat_intel": {
+    AgentRole.THREAT_INTEL: {
         "name": "Dr. Kim Park",
         "role": AgentRole.THREAT_INTEL,
         "model": settings.DEFAULT_MODEL,
         "temperature": 0.15,
         "max_tokens": 2000,
-        "timeout": 45,  # More time for research
+        "timeout": 45,
         "retry_attempts": 3,
         "confidence_threshold": 0.8,
         "interruption_threshold": 0.75,
         "enabled": True
     },
-    "compliance": {
+    AgentRole.COMPLIANCE: {
         "name": "Maria Santos",
         "role": AgentRole.COMPLIANCE,
         "model": settings.DEFAULT_MODEL,
         "temperature": 0.05,
-        "max_tokens": 2500,  # Compliance responses can be longer
+        "max_tokens": 2500,
         "timeout": 30,
         "retry_attempts": 3,
-        "confidence_threshold": 0.9,  # Highest confidence for compliance
+        "confidence_threshold": 0.9,
         "interruption_threshold": 0.85,
         "enabled": True
     },
-    "coordinator": {
+    AgentRole.COORDINATOR: {
         "name": "Team Coordinator",
         "role": AgentRole.COORDINATOR,
         "model": settings.DEFAULT_MODEL,
@@ -83,48 +82,82 @@ AGENT_CONFIGS = {
 }
 
 
-# Tool permissions mapping
+TOOL_DEFINITIONS = {
+    "ioc_analysis_tool": {
+        "name": "ioc_analysis_tool",
+        "description": "Analyzes a specific Indicator of Compromise (IOC) like an IP address, domain, or file hash to determine if it is malicious and get context.",
+        "parameters": { "type": "object", "properties": { "indicator": { "type": "string", "description": "The IOC to analyze, e.g., '1.2.3.4' or 'badsite.com'."}}, "required": ["indicator"]}
+    },
+    "vulnerability_search_tool": {
+        "name": "vulnerability_search_tool",
+        "description": "Searches for details on a Common Vulnerabilities and Exposures (CVE) ID to find its severity, impacted systems, and available patches.",
+        "parameters": { "type": "object", "properties": { "cve_id": { "type": "string", "description": "The CVE identifier, e.g., 'CVE-2023-12345'."}}, "required": ["cve_id"]}
+    },
+    "web_search_tool": {
+        "name": "web_search_tool",
+        "description": "Performs a web search to find up-to-date information on cybersecurity news, emerging threats, or technical topics.",
+        "parameters": { "type": "object", "properties": { "query": { "type": "string", "description": "The search query."}}, "required": ["query"]}
+    },
+    "knowledge_search_tool": {
+        "name": "knowledge_search_tool",
+        "description": "Searches the internal knowledge base for company-specific documents like playbooks, policies, and post-incident reports.",
+        "parameters": { "type": "object", "properties": { "query": { "type": "string", "description": "The topic or keyword to search for in the knowledge base."}}, "required": ["query"]}
+    },
+    "breach_monitoring_tool": {
+        "name": "breach_monitoring_tool",
+        "description": "Checks public data breach repositories and dark web monitoring services to see if a given domain or email address has been compromised.",
+        "parameters": { "type": "object", "properties": { "domain_or_email": { "type": "string", "description": "The domain name or email address to check for breaches."}}, "required": ["domain_or_email"]}
+    },
+    "attack_surface_analyzer_tool": {
+        "name": "attack_surface_analyzer_tool",
+        "description": "Analyzes a company's domain to identify exposed assets, open ports, and potential vulnerabilities visible from the internet.",
+        "parameters": { "type": "object", "properties": { "domain": { "type": "string", "description": "The company's primary domain to analyze."}}, "required": ["domain"]}
+    },
+    "threat_feeds_tool": {
+        "name": "threat_feeds_tool",
+        "description": "Queries subscribed threat intelligence feeds for information on threat actors, campaigns, tactics, techniques, and procedures (TTPs).",
+        "parameters": { "type": "object", "properties": { "topic": { "type": "string", "description": "The threat actor, campaign, or TTP to research."}}, "required": ["topic"]}
+    },
+    "compliance_guidance_tool": {
+        "name": "compliance_guidance_tool",
+        "description": "Provides guidance on specific regulatory compliance frameworks like GDPR, HIPAA, or PCI-DSS based on a query.",
+        "parameters": { "type": "object", "properties": { "framework": { "type": "string", "description": "The compliance framework, e.g., 'GDPR'."}, "query": { "type": "string", "description": "The specific compliance question."}}, "required": ["framework", "query"]}
+    }
+}
+
+
 AGENT_TOOL_PERMISSIONS = {
     AgentRole.INCIDENT_RESPONSE: [
-        "analyze_indicators",
-        "search_vulnerabilities",
-        "forensics_tools",
-        "incident_playbooks",
-        "web_search",
-        "knowledge_search"
+        "ioc_analysis_tool",
+        "vulnerability_search_tool",
+        "web_search_tool",
+        "knowledge_search_tool",
+        "breach_monitoring_tool"
     ],
     AgentRole.PREVENTION: [
-        "search_vulnerabilities",
-        "security_benchmarks",
-        "architecture_patterns",
-        "compliance_check",
-        "web_search",
-        "knowledge_search"
+        "vulnerability_search_tool",
+        "attack_surface_analyzer_tool",
+        "web_search_tool",
+        "knowledge_search_tool"
     ],
     AgentRole.THREAT_INTEL: [
-        "analyze_indicators",
-        "threat_feeds",
-        "attribution_db",
-        "mitre_attack",
-        "web_search",
-        "knowledge_search"
+        "ioc_analysis_tool",
+        "threat_feeds_tool",
+        "web_search_tool",
+        "knowledge_search_tool"
     ],
     AgentRole.COMPLIANCE: [
-        "compliance_check",
-        "regulation_db",
-        "audit_tools",
-        "policy_templates",
-        "web_search",
-        "knowledge_search"
+        "compliance_guidance_tool",
+        "web_search_tool",
+        "knowledge_search_tool"
     ],
     AgentRole.COORDINATOR: [
-        "web_search",
-        "knowledge_search"
+        "web_search_tool",
+        "knowledge_search_tool"
     ]
 }
 
 
-# Agent interaction rules
 INTERACTION_RULES = {
     "speaking_order": [
         AgentRole.INCIDENT_RESPONSE,
@@ -139,14 +172,13 @@ INTERACTION_RULES = {
         "compliance_check": AgentRole.COMPLIANCE
     },
     "consensus_requirements": {
-        "critical_decisions": 3,  # Number of agents that must agree
+        "critical_decisions": 3,
         "standard_decisions": 2,
         "informational": 1
     }
 }
 
 
-# Response time limits (in seconds)
 RESPONSE_TIME_LIMITS = {
     "emergency": 10,
     "urgent": 30,
@@ -155,7 +187,6 @@ RESPONSE_TIME_LIMITS = {
 }
 
 
-# Quality thresholds
 QUALITY_THRESHOLDS = {
     AgentRole.INCIDENT_RESPONSE: 7.5,
     AgentRole.PREVENTION: 7.0,
@@ -165,7 +196,6 @@ QUALITY_THRESHOLDS = {
 }
 
 
-# Agent expertise domains (for knowledge routing)
 EXPERTISE_DOMAINS = {
     AgentRole.INCIDENT_RESPONSE: [
         "incident_handling",
@@ -194,18 +224,17 @@ EXPERTISE_DOMAINS = {
 }
 
 
-# Helper functions
 def get_agent_config(role: AgentRole) -> Dict[str, Any]:
     """Get configuration for a specific agent role"""
-    for config in AGENT_CONFIGS.values():
-        if config["role"] == role:
-            return config
-    raise ValueError(f"No configuration found for role: {role}")
+    if role not in AGENT_CONFIGS:
+        raise ValueError(f"No configuration found for role: {role}")
+    return AGENT_CONFIGS[role]
 
 
-def get_agent_tools(role: AgentRole) -> List[str]:
-    """Get allowed tools for an agent role"""
-    return AGENT_TOOL_PERMISSIONS.get(role, [])
+def get_agent_tools(role: AgentRole) -> List[Dict[str, Any]]:
+    """Gets the full definitions for all tools an agent is permitted to use."""
+    allowed_tool_names = AGENT_TOOL_PERMISSIONS.get(role, [])
+    return [TOOL_DEFINITIONS[tool_name] for tool_name in allowed_tool_names if tool_name in TOOL_DEFINITIONS]
 
 
 def get_quality_threshold(role: AgentRole) -> float:
@@ -229,7 +258,6 @@ def get_agent_by_name(name: str) -> Dict[str, Any]:
     raise ValueError(f"No agent found with name: {name}")
 
 
-# Conversation configuration
 CONVERSATION_CONFIG = {
     "max_rounds": 10,
     "min_confidence_for_conclusion": 0.7,
@@ -243,6 +271,7 @@ CONVERSATION_CONFIG = {
 __all__ = [
     "AgentRole",
     "AGENT_CONFIGS",
+    "TOOL_DEFINITIONS",
     "AGENT_TOOL_PERMISSIONS",
     "INTERACTION_RULES",
     "RESPONSE_TIME_LIMITS",
