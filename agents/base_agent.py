@@ -1,138 +1,101 @@
 # agents/base_agent.py
 
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
-from openai import AsyncOpenAI
-from datetime import datetime
 import logging
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List
 
-from config import (
-    AgentRole,
-    get_agent_config,
-    get_agent_tools,
-    get_quality_threshold
-)
+from openai import AsyncOpenAI
+
+# Assuming your config is accessible from a parent directory (e.g., ../config.py)
+# This relative import path might need adjustment based on your project's root.
+from ..config import AgentRole, get_agent_config, get_agent_tools
 
 logger = logging.getLogger(__name__)
 
 
 class BaseAgent(ABC):
     """
-    Abstract base class for all cybersecurity agents.
-    Provides prompt construction, analysis, tool suggestion, and LangGraph compatibility.
+    The abstract base class for all specialist agents in the system.
+
+    This class provides the core structure for an agent, including initialization
+    with role-specific configurations and an interface for analysis. It is designed
+    to be invoked by an orchestration layer (e.g., a LangGraph node).
     """
 
-    def __init__(self, role: AgentRole, llm_client: Optional[AsyncOpenAI] = None):
+    def __init__(self, role: AgentRole, client: AsyncOpenAI):
+        """
+        Initializes the agent with its specific role and a shared LLM client.
+
+        This demonstrates dependency injection, making the agent more testable
+        and efficient.
+
+        Args:
+            role: The enum representing the agent's role (e.g., AgentRole.INCIDENT_RESPONSE).
+            client: An initialized AsyncOpenAI client for making API calls.
+        """
         self.role = role
         self.config = get_agent_config(role)
+        self.llm = client
 
-        self.name = self.config["name"]
-        self.model = self.config["model"]
-        self.temperature = self.config["temperature"]
-        self.max_tokens = self.config["max_tokens"]
-        self.confidence_threshold = self.config["confidence_threshold"]
-        self.quality_threshold = get_quality_threshold(role)
-        self.allowed_tools = get_agent_tools(role)
+        # Core properties are loaded from the configuration file, not hardcoded.
+        self.name: str = self.config["name"]
+        self.model: str = self.config["model"]
+        self.temperature: float = self.config["temperature"]
+        self.max_tokens: int = self.config["max_tokens"]
 
-        self.llm = llm_client or AsyncOpenAI()
-        self.current_context: Dict[str, Any] = {}
+        # Gets the full definitions for the tools this agent is permitted to use.
+        self.tools: List[Dict[str, Any]] = get_agent_tools(self.role)
 
         logger.info(f"Initialized agent: {self.name} ({self.role.value})")
 
     @abstractmethod
     def get_system_prompt(self) -> str:
-        """Role-specific system prompt"""
+        """
+        Returns the system prompt that defines the agent's persona and instructions.
+
+        This method must be implemented by each specialized agent subclass, fulfilling
+        the single responsibility principle.
+        """
         pass
 
-    async def analyze(
-        self,
-        query: str,
-        context: Optional[Dict[str, Any]] = None,
-        use_tools: bool = True
-    ) -> Dict[str, Any]:
-        """Main analysis method"""
+    async def analyze(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Performs analysis by calling the LLM with the agent's persona and tools.
+
+        This method serves as the standard interface for the workflow to use.
+
+        Args:
+            messages: The current list of messages from the conversation state.
+
+        Returns:
+            The response dictionary from the LLM's message, which may include
+            content for the user and/or tool_calls for the workflow to execute.
+        """
+        system_prompt = self.get_system_prompt()
+        messages_with_system = [
+            {"role": "system", "content": system_prompt},
+            *messages,
+        ]
+
         try:
-            if context:
-                self.current_context.update(context)
-
-            messages = [
-                {"role": "system", "content": self.get_system_prompt()},
-                {"role": "user", "content": query}
-            ]
-
-            if self.current_context:
-                messages.append({
-                    "role": "system",
-                    "content": f"Context: {self._format_context(self.current_context)}"
-                })
-
             response = await self.llm.chat.completions.create(
                 model=self.model,
-                messages=messages,
+                messages=messages_with_system,
                 temperature=self.temperature,
-                max_tokens=self.max_tokens
+                max_tokens=self.max_tokens,
+                tools=self.tools if self.tools else None,
+                tool_choice="auto" if self.tools else None,
             )
-
-            agent_reply = response.choices[0].message.content
-            confidence = await self.score_response(query, agent_reply)
-
-            tool = await self.get_tool_recommendation(query) if use_tools else None
-
-            return {
-                "agent": self.name,
-                "role": self.role.value,
-                "response": agent_reply,
-                "confidence": confidence,
-                "tool_suggested": tool,
-                "timestamp": datetime.utcnow().isoformat()
-            }
+            # Return the message object, which contains 'content' and/or 'tool_calls'
+            # The .model_dump() method converts it to a dictionary for the graph state.
+            return response.choices[0].message.model_dump()
 
         except Exception as e:
-            logger.exception(f"{self.name} analysis failed")
+            logger.error(
+                f"Agent {self.name} encountered an API error: {e}", exc_info=True
+            )
+            # Return a structured error message for the workflow to handle gracefully.
             return {
-                "agent": self.name,
-                "role": self.role.value,
-                "response": f"Error: {str(e)}",
-                "confidence": 0.0,
-                "error": True
+                "role": "assistant",
+                "content": f"I apologize, but I encountered an internal error and could not complete your request. (Error: {e})",
             }
-
-    async def run_step(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        LangGraph-compatible interface
-        Expects: { "query": str, "context": dict }
-        """
-        query = state.get("query", "")
-        context = state.get("context", {})
-
-        result = await self.analyze(query=query, context=context)
-        return {"agent_response": result, "context": context}
-
-    async def score_response(self, query: str, response: str) -> float:
-        """
-        Hook to calculate confidence (placeholder for LLM-as-a-Judge).
-        Override in future to support quality gates.
-        """
-        return 0.75  # default fallback
-
-    async def get_tool_recommendation(self, query: str) -> Optional[str]:
-        """Keyword-based tool matching"""
-        query_lower = query.lower()
-
-        tool_keywords = {
-            "ioc_analysis_tool": ["ip", "domain", "hash", "ioc"],
-            "vulnerability_search_tool": ["cve", "vulnerability", "exploit"],
-            "threat_feeds_tool": ["actor", "campaign", "apt"],
-            "compliance_guidance_tool": ["compliance", "gdpr", "hipaa"],
-            "web_search_tool": ["search", "latest", "news"],
-            "knowledge_search_tool": ["playbook", "procedure", "guide"]
-        }
-
-        for tool, keywords in tool_keywords.items():
-            if tool in self.allowed_tools:
-                if any(keyword in query_lower for keyword in keywords):
-                    return tool
-        return None
-
-    def _format_context(self, context: Dict[str, Any]) -> str:
-        return "; ".join(f"{k}: {v}" for k, v in context.items())
