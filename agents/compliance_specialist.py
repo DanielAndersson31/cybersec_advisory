@@ -1,16 +1,18 @@
 # agents/compliance_agent.py
 
-from .base_agent import BaseAgent
+from .base_agent import BaseSecurityAgent
 from ..config import AgentRole
+from mcp.cybersec_client import CybersecurityMCPClient
+from openai import AsyncOpenAI
 
 
-class ComplianceAgent(BaseAgent):
+class ComplianceAgent(BaseSecurityAgent):
     """
     The specialist agent for regulatory compliance and governance.
     """
 
-    def __init__(self, client):
-        super().__init__(AgentRole.COMPLIANCE, client)
+    def __init__(self, llm_client: AsyncOpenAI, mcp_client: CybersecurityMCPClient):
+        super().__init__(AgentRole.COMPLIANCE, llm_client, mcp_client)
 
     def get_system_prompt(self) -> str:
         """

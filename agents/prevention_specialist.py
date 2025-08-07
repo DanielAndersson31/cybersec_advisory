@@ -1,16 +1,18 @@
 # agents/prevention_agent.py
 
-from .base_agent import BaseAgent
+from .base_agent import BaseSecurityAgent
 from ..config import AgentRole
+from mcp.cybersec_client import CybersecurityMCPClient
+from openai import AsyncOpenAI
 
 
-class PreventionAgent(BaseAgent):
+class PreventionAgent(BaseSecurityAgent):
     """
     The specialist agent for security architecture and proactive defense.
     """
 
-    def __init__(self, client):
-        super().__init__(AgentRole.PREVENTION, client)
+    def __init__(self, llm_client: AsyncOpenAI, mcp_client: CybersecurityMCPClient):
+        super().__init__(AgentRole.PREVENTION, llm_client, mcp_client)
 
     def get_system_prompt(self) -> str:
         """
