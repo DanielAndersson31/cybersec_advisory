@@ -42,6 +42,8 @@ langchain-qdrant = "^0.2.0"
 langchain-community = "^0.3.27"
 sentence-transformers = "^5.0.0"
 pypdf = "^5.9.0"
+pytest-asyncio = "^1.1.0"
+pytest = "^8.4.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0.0"

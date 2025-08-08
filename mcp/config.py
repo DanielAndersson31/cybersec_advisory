@@ -17,8 +17,8 @@ class MCPConfig:
         """Initialize the MCP configuration."""
         self._server_config = {
             "name": "Cybersecurity Tools Server",
-            "host": settings.MCP_HOST,
-            "port": settings.MCP_PORT,
+            "host": settings.mcp_server_host,
+            "port": settings.mcp_server_port,
             "timeout": 60,
             "description": "Complete cybersecurity toolset for multi-agent advisory system",
             "version": "1.0.0",

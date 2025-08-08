@@ -5,10 +5,9 @@ Simple, clean MCP client combining transport and business logic.
 Follows the project's patterns for straightforward, maintainable code.
 """
 
-import asyncio
 import httpx
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
 from mcp.config import config
 

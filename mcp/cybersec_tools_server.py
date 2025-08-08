@@ -4,23 +4,20 @@ Complete Cybersecurity MCP Server
 Provides all cybersecurity tools for the multi-agent advisory system.
 """
 
-from fastmcp import FastMCP
-from typing import Dict, Any, List, Optional
 import logging
-import asyncio
-
-# Import configuration class
+from typing import Dict, Any, List, Optional
+from fastmcp import FastMCP
 from mcp.config import config
-
-# Import all the actual tool functions
-from mcp.tools.web_search import web_search
-from mcp.tools.knowledge_search import knowledge_search
-from mcp.tools.ioc_analysis import analyze_indicators
-from mcp.tools.vulnerability_search import search_vulnerabilities
-from mcp.tools.attack_surface_analyzer import analyze_attack_surface
-from mcp.tools.threat_feeds import search_threat_feeds
-from mcp.tools.compliance_guidance import get_compliance_guidance
-from mcp.tools.breach_monitoring import check_email
+from mcp.tools import (
+    web_search,
+    knowledge_search,
+    analyze_indicators,
+    search_vulnerabilities,
+    analyze_attack_surface,
+    search_threat_feeds,
+    get_compliance_guidance,
+    check_breached_email
+)
 
 # Configure logging
 logging.basicConfig(
@@ -116,7 +113,7 @@ async def search_knowledge_base(
     """
     try:
         logger.info(f"Knowledge base search: {query} (domain: {domain})")
-        result = await knowledge_search(
+        result = knowledge_search(
             query=query,
             domain=domain,
             limit=limit,
@@ -140,7 +137,7 @@ async def search_knowledge_base(
 # =============================================================================
 
 @mcp.tool()
-async def analyze_indicators(
+async def analyze_ioc(
     indicators: List[str],
     check_reputation: bool = True,
     enrich_data: bool = True,
@@ -198,7 +195,7 @@ async def check_breach_exposure(email: str) -> Dict[str, Any]:
     """
     try:
         logger.info(f"Breach exposure check: {email}")
-        result = await check_email(email=email)
+        result = await check_breached_email(email=email)
         
         if result.get("status") == "success":
             breach_count = result.get("breach_count", 0)
@@ -222,7 +219,7 @@ async def check_breach_exposure(email: str) -> Dict[str, Any]:
 # =============================================================================
 
 @mcp.tool()
-async def search_threat_feeds(
+async def get_threat_feeds(
     query: str,
     limit: int = 10
 ) -> Dict[str, Any]:
@@ -264,7 +261,7 @@ async def search_threat_feeds(
 # =============================================================================
 
 @mcp.tool()
-async def search_vulnerabilities(
+async def find_vulnerabilities(
     query: str,
     severity_filter: Optional[List[str]] = None,
     date_range: Optional[str] = None,
@@ -315,7 +312,7 @@ async def search_vulnerabilities(
 
 
 @mcp.tool()
-async def analyze_attack_surface(host: str) -> Dict[str, Any]:
+async def scan_attack_surface(host: str) -> Dict[str, Any]:
     """
     Analyze the external attack surface of a host or domain using ZoomEye API.
     
@@ -352,7 +349,7 @@ async def analyze_attack_surface(host: str) -> Dict[str, Any]:
 # =============================================================================
 
 @mcp.tool()
-async def get_compliance_guidance(
+async def compliance_guidance(
     framework: str,
     data_type: Optional[str] = None,
     region: Optional[str] = None,
