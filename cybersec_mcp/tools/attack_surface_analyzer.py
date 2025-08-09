@@ -2,11 +2,11 @@
 Simple attack surface analysis tool using the ZoomEye API.
 """
 
-import os
 import httpx
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 import logging
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +29,18 @@ class AttackSurfaceResponse(BaseModel):
     error: Optional[str] = None
 
 
-class AttackSurfaceAnalyzerTool:
-    """A tool to analyze the attack surface of a host using ZoomEye."""
-    
+class AttackSurfaceAnalyzer:
+    """Tool for analyzing attack surface using ZoomEye API"""
+
     def __init__(self):
-        """Initialize with ZoomEye API key."""
-        self.api_key = os.getenv("ZOOMEYE_API_KEY")
+        """Initialize ZoomEye client"""
+        self.api_key = settings.zoomeye_api_key
         if not self.api_key:
-            logger.warning("ZOOMEYE_API_KEY environment variable not set. Attack surface analysis will not function.")
+            raise ValueError("ZOOMEYE_API_KEY not configured in settings")
         self.base_url = "https://api.zoomeye.org"
-        
-    async def analyze(self, host: str) -> AttackSurfaceResponse:
+        self.client = httpx.AsyncClient()
+
+    async def analyze(self, host: str) -> Dict[str, Any]:
         """
         Analyzes a host (IP or domain) using the ZoomEye API.
         
@@ -65,8 +66,7 @@ class AttackSurfaceAnalyzerTool:
         
         try:
             # Make the API request
-            async with httpx.AsyncClient() as client:
-                api_response = await client.get(url, headers=headers, params=params)
+            api_response = await self.client.get(url, headers=headers, params=params)
             
             if api_response.status_code != 200:
                 return AttackSurfaceResponse(
@@ -116,7 +116,7 @@ class AttackSurfaceAnalyzerTool:
             )
 
 # Create a singleton instance of the tool
-attack_surface_analyzer_tool = AttackSurfaceAnalyzerTool()
+attack_surface_analyzer_tool = AttackSurfaceAnalyzer()
 
 
 # Export function that the MCP server will import

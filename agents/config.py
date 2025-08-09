@@ -86,7 +86,7 @@ TOOL_DEFINITIONS = {
     "ioc_analysis_tool": {
         "name": "ioc_analysis_tool",
         "description": "Analyzes a specific Indicator of Compromise (IOC) like an IP address, domain, or file hash to determine if it is malicious and get context.",
-        "parameters": { "type": "object", "properties": { "indicator": { "type": "string", "description": "The IOC to analyze, e.g., '1.2.3.4' or 'badsite.com'."}}, "required": ["indicator"]}
+        "parameters": { "type": "object", "properties": { "indicator": { "type": "string", "description": "The IOC to analyze, e.g., '1.2.3.4' or 'badsite.com."}}, "required": ["indicator"]}
     },
     "vulnerability_search_tool": {
         "name": "vulnerability_search_tool",
@@ -103,10 +103,16 @@ TOOL_DEFINITIONS = {
         "description": "Searches the internal knowledge base for company-specific documents like playbooks, policies, and post-incident reports.",
         "parameters": { "type": "object", "properties": { "query": { "type": "string", "description": "The topic or keyword to search for in the knowledge base."}}, "required": ["query"]}
     },
-    "breach_monitoring_tool": {
-        "name": "breach_monitoring_tool",
-        "description": "Checks public data breach repositories and dark web monitoring services to see if a given domain or email address has been compromised.",
-        "parameters": { "type": "object", "properties": { "domain_or_email": { "type": "string", "description": "The domain name or email address to check for breaches."}}, "required": ["domain_or_email"]}
+    "exposure_checker_tool": {
+        "name": "exposure_checker_tool",
+        "description": "Checks if an email address has been exposed in a data breach.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "email": { "type": "string", "description": "The email address to check for exposure."}
+            },
+            "required": ["email"]
+        }
     },
     "attack_surface_analyzer_tool": {
         "name": "attack_surface_analyzer_tool",
@@ -132,7 +138,7 @@ AGENT_TOOL_PERMISSIONS = {
         "vulnerability_search_tool",
         "web_search_tool",
         "knowledge_search_tool",
-        "breach_monitoring_tool"
+        "exposure_checker_tool"
     ],
     AgentRole.PREVENTION: [
         "vulnerability_search_tool",

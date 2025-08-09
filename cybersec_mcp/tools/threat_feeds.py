@@ -2,11 +2,11 @@
 Search for threat intelligence reports (Pulses) on AlienVault OTX.
 """
 
-import os
-import httpx
-from typing import List, Optional
-from pydantic import BaseModel
 import logging
+from typing import Dict, Any, List, Optional
+from pydantic import BaseModel
+import httpx
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -35,20 +35,17 @@ class ThreatFeedResponse(BaseModel):
 
 
 class ThreatFeedsTool:
-    """A tool to search for threat reports on AlienVault OTX."""
-    
+    """Tool for searching threat intelligence feeds via AlienVault OTX"""
+
     def __init__(self):
-        """Initialize with AlienVault OTX API key."""
-        self.otx_api_key = os.getenv("OTX_API_KEY")
+        """Initialize OTX client"""
+        self.otx_api_key = settings.otx_api_key
         if not self.otx_api_key:
-            logger.warning("OTX_API_KEY environment variable not set. Threat feed search will not function.")
-        self.otx_base_url = "https://otx.alienvault.com/api/v1"
-        
-    async def search(
-        self,
-        query: str,
-        limit: int = 10
-    ) -> ThreatFeedResponse:
+            raise ValueError("OTX_API_KEY not configured in settings")
+        self.base_url = "https://otx.alienvault.com/api/v1"
+        self.client = httpx.AsyncClient()
+
+    async def search(self, query: str, limit: int = 10) -> Dict[str, Any]:
         """
         Search for threat pulses on AlienVault OTX.
         
@@ -70,12 +67,11 @@ class ThreatFeedsTool:
 
         headers = {"X-OTX-API-KEY": self.otx_api_key}
         params = {"q": query, "limit": min(limit, 50)}
-        search_url = f"{self.otx_base_url}/search/pulses"
+        search_url = f"{self.base_url}/search/pulses"
 
         try:
             # Make the API request
-            async with httpx.AsyncClient() as client:
-                api_response = await client.get(search_url, headers=headers, params=params)
+            api_response = await self.client.get(search_url, headers=headers, params=params)
             
             if api_response.status_code != 200:
                 return ThreatFeedResponse(

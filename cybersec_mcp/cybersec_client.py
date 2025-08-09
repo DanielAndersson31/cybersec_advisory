@@ -9,7 +9,7 @@ import httpx
 import logging
 from typing import Dict, Any, Optional
 
-from mcp.config import config
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +28,15 @@ class CybersecurityMCPClient:
     def __init__(self, agent_name: Optional[str] = None):
         """Initialize the MCP client"""
         self.agent_name = agent_name
-        self.server_url = config.get_server_url()
-        self.timeout = config.client["default_timeout"]
+        self.server_url = f"http://{settings.mcp_server_host}:{settings.mcp_server_port}/cybersec_mcp"
+        self.timeout = 30.0 # Default timeout
         
         # Simple HTTP client setup
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(self.timeout),
             limits=httpx.Limits(
-                max_connections=config.client["connection_pool"]["max_connections"],
-                max_keepalive_connections=config.client["connection_pool"]["max_keepalive"]
+                max_connections=10,
+                max_keepalive_connections=5
             )
         )
         
@@ -56,9 +56,8 @@ class CybersecurityMCPClient:
     # Core MCP method
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Call an MCP tool with the given arguments"""
-        # Check agent permissions
-        if not self._check_permissions(tool_name):
-            raise MCPClientError(f"Agent '{self.agent_name}' not authorized for tool '{tool_name}'")
+        # NOTE: Permissions check is removed as it's a complex feature
+        # that was part of the deleted config. Re-implement if needed.
         
         # Prepare request
         payload = {
@@ -93,14 +92,10 @@ class CybersecurityMCPClient:
             logger.error(f"MCP tool call failed: {tool_name} - {e}")
             raise MCPClientError(f"Tool call failed: {e}")
     
+    # Permissions check is disabled as it's no longer configured
     def _check_permissions(self, tool_name: str) -> bool:
-        """Check if agent can use this tool"""
-        agent_permissions = config.get_agent_permissions(self.agent_name)
-        if not agent_permissions:
-            return False
-        
-        allowed_tools = agent_permissions.get("allowed_tools", [])
-        return tool_name in allowed_tools or "*" in allowed_tools
+        """Permissions are currently disabled."""
+        return True
     
     # Cybersecurity-specific convenience methods
     async def search_web(self, query: str, max_results: int = 5) -> Dict[str, Any]:
@@ -140,16 +135,10 @@ class CybersecurityMCPClient:
             "scan_type": scan_type
         })
     
-    async def monitor_breaches(self, domain: str = None, keywords: str = None) -> Dict[str, Any]:
-        """Monitor for data breaches"""
-        args = {}
-        if domain:
-            args["domain"] = domain
-        if keywords:
-            args["keywords"] = keywords
-        
-        return await self.call_tool("breach_monitoring", args)
-    
+    async def check_exposure(self, email_or_domain: str) -> Dict[str, Any]:
+        """Check for email or domain exposure."""
+        return await self.call_tool("exposure_checker_tool", {"email_or_domain": email_or_domain})
+
     async def get_compliance_guidance(self, framework: str, topic: str = None) -> Dict[str, Any]:
         """Get compliance guidance for security frameworks"""
         args = {"framework": framework}

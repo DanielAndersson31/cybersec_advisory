@@ -4,8 +4,34 @@ Knowledge search tool for internal cybersecurity documentation and playbooks.
 
 from typing import Dict, Any, List, Optional
 import logging
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+
+class KnowledgeResultMetadata(BaseModel):
+    """Metadata for a knowledge base document."""
+    doc_id: str
+    last_updated: str
+    tags: List[str]
+    author: str
+
+class KnowledgeResult(BaseModel):
+    """A single result from a knowledge base search."""
+    title: str
+    category: str
+    summary: str
+    relevance_score: float
+    metadata: Optional[KnowledgeResultMetadata] = None
+
+class KnowledgeSearchResponse(BaseModel):
+    """The structured response for a knowledge search query."""
+    status: str = "success"
+    query: str
+    categories_searched: List[str]
+    results: List[KnowledgeResult]
+    total_results: int
+    error: Optional[str] = None
 
 
 class KnowledgeSearchTool:
@@ -31,7 +57,7 @@ class KnowledgeSearchTool:
         categories: Optional[List[str]] = None,
         limit: int = 10,
         include_metadata: bool = True
-    ) -> Dict[str, Any]:
+    ) -> KnowledgeSearchResponse:
         """
         Search internal knowledge base for cybersecurity documentation.
         
@@ -42,7 +68,7 @@ class KnowledgeSearchTool:
             include_metadata: Include document metadata in results
             
         Returns:
-            Dict containing relevant documents
+            A KnowledgeSearchResponse object.
         """
         # Validate categories
         if categories:
@@ -62,39 +88,41 @@ class KnowledgeSearchTool:
             # Format results
             formatted_results = []
             for doc in results:
-                result = {
-                    "title": doc["title"],
-                    "category": doc["category"],
-                    "summary": doc["summary"],
-                    "relevance_score": doc["score"]
-                }
-                
+                metadata = None
                 if include_metadata:
-                    result["metadata"] = {
-                        "doc_id": doc["doc_id"],
-                        "last_updated": doc["last_updated"],
-                        "tags": doc.get("tags", []),
-                        "author": doc.get("author", "Security Team")
-                    }
+                    metadata = KnowledgeResultMetadata(
+                        doc_id=doc["doc_id"],
+                        last_updated=doc["last_updated"],
+                        tags=doc.get("tags", []),
+                        author=doc.get("author", "Security Team")
+                    )
                 
+                result = KnowledgeResult(
+                    title=doc["title"],
+                    category=doc["category"],
+                    summary=doc["summary"],
+                    relevance_score=doc["score"],
+                    metadata=metadata
+                )
                 formatted_results.append(result)
             
-            return {
-                "status": "success",
-                "query": query,
-                "categories_searched": categories,
-                "results": formatted_results,
-                "total_results": len(formatted_results)
-            }
+            return KnowledgeSearchResponse(
+                query=query,
+                categories_searched=categories,
+                results=formatted_results,
+                total_results=len(formatted_results)
+            )
             
         except Exception as e:
             logger.error(f"Knowledge search error: {str(e)}")
-            return {
-                "status": "error",
-                "error": str(e),
-                "query": query,
-                "results": []
-            }
+            return KnowledgeSearchResponse(
+                status="error",
+                query=query,
+                categories_searched=categories or [],
+                results=[],
+                total_results=0,
+                error=str(e)
+            )
     
     def _initialize_mock_knowledge(self) -> List[Dict[str, Any]]:
         """Initialize mock knowledge base for testing"""
@@ -219,4 +247,5 @@ knowledge_search_tool = KnowledgeSearchTool()
 # Export function for easy use
 def knowledge_search(**kwargs) -> Dict[str, Any]:
     """Knowledge search function that MCP servers will import"""
-    return knowledge_search_tool.search(**kwargs)
+    response = knowledge_search_tool.search(**kwargs)
+    return response.model_dump()
