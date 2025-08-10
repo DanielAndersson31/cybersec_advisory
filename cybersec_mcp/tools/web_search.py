@@ -9,6 +9,7 @@ import logging
 from config.settings import settings
 import instructor
 from openai import AsyncOpenAI
+from async_lru import alru_cache
 
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class WebSearchResponse(BaseModel):
     status: str = "success"
     query: str
     enhanced_query: str
+    intent_reasoning: Optional[str] = None  # Add reasoning for transparency
     results: List[WebSearchResult]
     total_results: int
     error: Optional[str] = None
@@ -51,22 +53,41 @@ class WebSearchTool:
             AsyncOpenAI(api_key=settings.get_secret("openai_api_key"))
         )
         
-        # Trusted cybersecurity domains for focused searches
+        # A curated list of authoritative domains for high-quality results.
         self.trusted_domains = [
-            "cisa.gov",
-            "nist.gov",
-            "mitre.org",
-            "sans.org",
+            # Threat Intelligence & News
             "bleepingcomputer.com",
-            "krebsonsecurity.com"
+            "darkreading.com",
+            "thehackernews.com",
+            "threatpost.com",
+            "krebsonsecurity.com",
+            
+            # Vulnerability & Standards Databases
+            "cve.mitre.org",
+            "nvd.nist.gov",
+            "owasp.org",
+
+            # Government & Research Organizations
+            "cisa.gov",
+            "us-cert.gov",
+            "sans.org",
+
+            # Leading Security Vendor Blogs (can be adjusted)
+            "fireeye.com/blog",
+            "crowdstrike.com/blog",
+            "mandiant.com/resources/blog"
         ]
 
+    @alru_cache(maxsize=128)
     async def classify_query_intent(self, query: str) -> QueryIntent:
-        """Use an LLM to classify if the query is cybersecurity-related."""
+        """
+        Use an LLM to classify if the query is cybersecurity-related.
+        This method is cached to improve performance for repeated queries.
+        """
         try:
             # This prompt guides the LLM to return structured JSON.
             return await self.instructor.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=settings.search_model_name,
                 response_model=QueryIntent,
                 messages=[
                     {"role": "system", "content": "You are a world-class cybersecurity expert. Your task is to classify search queries."},
@@ -112,7 +133,7 @@ class WebSearchTool:
 
         enhanced_query = query
         # Only enhance if the LLM is confident it's a cybersecurity query.
-        if intent.is_cybersecurity and intent.confidence > 0.7:
+        if intent.is_cybersecurity and intent.confidence >= settings.search_confidence_threshold:
             enhanced_query = intent.suggested_enhancement or self._enhance_query(query, search_type)
         
         # For cybersecurity searches, use trusted domains if none are specified.
@@ -122,7 +143,7 @@ class WebSearchTool:
             not search_domains and 
             search_type == "general" and 
             intent.is_cybersecurity and 
-            intent.confidence > 0.7
+            intent.confidence >= settings.search_confidence_threshold
         ):
             search_domains = self.trusted_domains
         
@@ -152,6 +173,7 @@ class WebSearchTool:
             return WebSearchResponse(
                 query=query,
                 enhanced_query=enhanced_query,
+                intent_reasoning=intent.reasoning,
                 results=formatted_results,
                 total_results=len(formatted_results)
             )

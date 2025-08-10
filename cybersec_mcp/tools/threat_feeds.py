@@ -3,26 +3,41 @@ Search for threat intelligence reports (Pulses) on AlienVault OTX.
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import List, Optional, Union
 from pydantic import BaseModel
 import httpx
 from config.settings import settings
+import asyncio
+
 
 logger = logging.getLogger(__name__)
 
 
-# Pydantic Models
-class ThreatPulse(BaseModel):
-    """
-    Represents a single threat intelligence report (a "Pulse") from AlienVault OTX.
-    A Pulse is a collection of indicators of compromise (IOCs) and context about a threat.
-    """
+# Pydantic Models for structured, validated data
+class Indicator(BaseModel):
+    """Represents a single Indicator of Compromise (IOC) from a Pulse."""
+    indicator: str
+    type: str
+    title: Optional[str] = ""
+    description: Optional[str] = ""
+
+class ThreatPulseSummary(BaseModel):
+    """Represents the summary of a threat pulse, returned from a search."""
     id: str
     name: str
-    description: str
+    description: Optional[str] = ""
+    author_name: str
     modified: str
-    author: str
     tags: List[str] = []
+
+class ThreatPulse(ThreatPulseSummary):
+    """
+    Represents a single, detailed threat intelligence report (a "Pulse") from AlienVault OTX.
+    A Pulse is a collection of indicators of compromise (IOCs) and context about a threat.
+    """
+    references: List[str] = []
+    indicators: List[Indicator] = []
+    malware_families: List[str] = []
 
 
 class ThreatFeedResponse(BaseModel):
@@ -30,7 +45,7 @@ class ThreatFeedResponse(BaseModel):
     status: str = "success"
     query: str
     total_results: int
-    results: List[ThreatPulse]
+    results: List[Union[ThreatPulse, ThreatPulseSummary]]
     error: Optional[str] = None
 
 
@@ -38,72 +53,87 @@ class ThreatFeedsTool:
     """Tool for searching threat intelligence feeds via AlienVault OTX"""
 
     def __init__(self):
-        """Initialize OTX client"""
-        self.otx_api_key = settings.otx_api_key
-        if not self.otx_api_key:
-            raise ValueError("OTX_API_KEY not configured in settings")
+        """Initialize OTX client using centralized secret management."""
+        self.otx_api_key = settings.get_secret("otx_api_key")
         self.base_url = "https://otx.alienvault.com/api/v1"
-        self.client = httpx.AsyncClient()
+        self.client = httpx.AsyncClient(headers={"X-OTX-API-KEY": self.otx_api_key}, timeout=30.0)
 
-    async def search(self, query: str, limit: int = 10) -> Dict[str, Any]:
+    async def get_pulse_details(self, pulse_id: str) -> Optional[ThreatPulse]:
+        """Fetch the full details for a single threat pulse, including IOCs."""
+        detail_url = f"{self.base_url}/pulses/{pulse_id}"
+        try:
+            response = await self.client.get(detail_url)
+            response.raise_for_status()
+            pulse_dict = response.json()
+
+            # Extract malware family names from the nested structure
+            families = [mf['display_name'] for mf in pulse_dict.get('malware_families', [])]
+            pulse_dict['malware_families'] = families
+
+            return ThreatPulse.model_validate(pulse_dict)
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Failed to fetch details for pulse {pulse_id}: {e.response.status_code}")
+            return None
+        except Exception as e:
+            logger.error(f"An error occurred while fetching details for pulse {pulse_id}: {e}")
+            return None
+
+    async def search(
+        self, 
+        query: str, 
+        limit: int = 5,  # Reduce default limit for faster summary searches
+        fetch_full_details: bool = False
+    ) -> ThreatFeedResponse:
         """
-        Search for threat pulses on AlienVault OTX.
+        Search for threat pulses on AlienVault OTX. 
+        Can optionally fetch full details including IOCs for each pulse.
         
         Args:
             query: The search term (e.g., a malware family, threat actor, or campaign name).
             limit: The maximum number of results to return.
+            fetch_full_details: If True, fetches full details for each pulse (slower).
             
         Returns:
             A ThreatFeedResponse object containing the search results.
         """
-        if not self.otx_api_key:
+        params = {"q": query, "limit": min(limit, 20)} # Keep a reasonable max limit
+        search_url = f"{self.base_url}/search/pulses"
+
+        try:
+            # Step 1: Always get the list of pulse summaries
+            search_response = await self.client.get(search_url, params=params)
+            search_response.raise_for_status()
+            search_data = search_response.json()
+            pulse_summaries = search_data.get("results", [])
+
+            final_pulses: List[Union[ThreatPulse, ThreatPulseSummary]] = []
+            # Step 2: If requested, concurrently fetch the full details
+            if fetch_full_details:
+                detail_tasks = [self.get_pulse_details(pulse['id']) for pulse in pulse_summaries]
+                detailed_pulses_results = await asyncio.gather(*detail_tasks)
+                # Filter out any pulses that failed to fetch
+                final_pulses = [pulse for pulse in detailed_pulses_results if pulse is not None]
+            else:
+                # Otherwise, just parse the summary data we already have using the new model
+                for summary in pulse_summaries:
+                    final_pulses.append(ThreatPulseSummary.model_validate(summary))
+
+            return ThreatFeedResponse(
+                query=query,
+                total_results=search_data.get("count", 0),
+                results=final_pulses
+            )
+                
+        except httpx.HTTPStatusError as e:
+            error_message = f"OTX API search error: {e.response.status_code} - {e.response.text}"
+            logger.error(error_message)
             return ThreatFeedResponse(
                 status="error",
                 query=query,
                 total_results=0,
                 results=[],
-                error="OTX_API_KEY is not configured."
+                error=error_message
             )
-
-        headers = {"X-OTX-API-KEY": self.otx_api_key}
-        params = {"q": query, "limit": min(limit, 50)}
-        search_url = f"{self.base_url}/search/pulses"
-
-        try:
-            # Make the API request
-            api_response = await self.client.get(search_url, headers=headers, params=params)
-            
-            if api_response.status_code != 200:
-                return ThreatFeedResponse(
-                    status="error",
-                    query=query,
-                    total_results=0,
-                    results=[],
-                    error=f"OTX API error: {api_response.status_code} - {api_response.text}"
-                )
-            
-            # Parse the results
-            data = api_response.json()
-            pulses_data = data.get("results", [])
-            
-            pulse_results = []
-            for pulse in pulses_data:
-                pulse_result = ThreatPulse(
-                    id=pulse.get("id", ""),
-                    name=pulse.get("name", "No name provided"),
-                    description=pulse.get("description", "No description provided.")[:300] + "...",
-                    modified=pulse.get("modified", ""),
-                    author=pulse.get("author_name", "Unknown author"),
-                    tags=pulse.get("tags", [])
-                )
-                pulse_results.append(pulse_result)
-            
-            return ThreatFeedResponse(
-                query=query,
-                total_results=len(pulse_results),
-                results=pulse_results
-            )
-                
         except Exception as e:
             logger.error(f"Threat feed search error: {str(e)}")
             return ThreatFeedResponse(

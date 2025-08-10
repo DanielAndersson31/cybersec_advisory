@@ -91,8 +91,7 @@ async def search_web(
 async def search_knowledge_base(
     query: str,
     domain: Optional[str] = None,
-    limit: int = 5,
-    min_score: float = 0.7
+    limit: int = 5
 ) -> Dict[str, Any]:
     """
     Search the cybersecurity knowledge base for domain-specific information.
@@ -102,18 +101,16 @@ async def search_knowledge_base(
         domain: Knowledge domain to search ("incident_response", "prevention", 
                 "threat_intelligence", "compliance") - searches all if None
         limit: Maximum number of results to return (default: 5)
-        min_score: Minimum similarity score threshold (default: 0.7)
     
     Returns:
         Dict containing search results with status, query, and results list
     """
     try:
         logger.info(f"Knowledge base search: {query} (domain: {domain})")
-        result = knowledge_search(
+        result = await knowledge_search(
             query=query,
             domain=domain,
-            limit=limit,
-            min_score=min_score
+            limit=limit
         )
         logger.info(f"Knowledge search completed: {len(result.get('results', []))} results")
         return result
@@ -202,7 +199,8 @@ async def exposure_checker_tool(email: str) -> dict:
 @mcp.tool()
 async def get_threat_feeds(
     query: str,
-    limit: int = 10
+    limit: int = 10,
+    fetch_full_details: bool = False
 ) -> Dict[str, Any]:
     """
     Search AlienVault OTX threat intelligence feeds for IOCs and campaigns.
@@ -210,15 +208,17 @@ async def get_threat_feeds(
     Args:
         query: Search query (malware family, threat actor, campaign name, etc.)
         limit: Maximum number of threat reports to return (default: 10)
+        fetch_full_details: Set to True to retrieve full details including all IOCs (slower).
     
     Returns:
         Dict containing threat intelligence results with status, query, and threat reports
     """
     try:
-        logger.info(f"Threat intelligence search: {query}")
+        logger.info(f"Threat intelligence search: {query} (details: {fetch_full_details})")
         result = await search_threat_feeds(
             query=query,
-            limit=limit
+            limit=limit,
+            fetch_full_details=fetch_full_details
         )
         
         if result.get("status") == "success":

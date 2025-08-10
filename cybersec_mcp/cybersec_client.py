@@ -100,56 +100,66 @@ class CybersecurityMCPClient:
     # Cybersecurity-specific convenience methods
     async def search_web(self, query: str, max_results: int = 5) -> Dict[str, Any]:
         """Search web for cybersecurity information"""
-        return await self.call_tool("web_search", {
+        # SERVER TOOL: search_web(query, max_results, search_type, include_domains, time_range)
+        return await self.call_tool("search_web", {
+            
             "query": query,
             "max_results": max_results
         })
     
     async def analyze_ioc(self, indicator: str, indicator_type: str) -> Dict[str, Any]:
         """Analyze an indicator of compromise"""
-        return await self.call_tool("ioc_analysis", {
-            "indicator": indicator,
-            "type": indicator_type
+        # SERVER TOOL: analyze_ioc(indicators: List[str], ...)
+        # NOTE: indicator_type is ignored as the server tool does not use it.
+        return await self.call_tool("analyze_ioc", {
+            "indicators": [indicator], # Server expects a list
         })
     
     async def search_vulnerabilities(self, cve_id: str = None, keywords: str = None) -> Dict[str, Any]:
         """Search for vulnerability information"""
-        args = {}
-        if cve_id:
-            args["cve_id"] = cve_id
-        if keywords:
-            args["keywords"] = keywords
-        
-        return await self.call_tool("vulnerability_search", args)
+        # SERVER TOOL: find_vulnerabilities(query: str, ...)
+        # Use cve_id as the primary query if available, otherwise use keywords.
+        query = cve_id if cve_id else keywords
+        return await self.call_tool("find_vulnerabilities", {"query": query})
     
-    async def get_threat_feeds(self, feed_type: str = "all") -> Dict[str, Any]:
+    async def get_threat_feeds(
+        self, 
+        query: str, 
+        limit: int = 10, 
+        fetch_full_details: bool = False
+    ) -> Dict[str, Any]:
         """Get latest threat intelligence feeds"""
-        return await self.call_tool("threat_feeds", {
-            "feed_type": feed_type
+        return await self.call_tool("get_threat_feeds", {
+            "query": query,
+            "limit": limit,
+            "fetch_full_details": fetch_full_details,
         })
     
     async def analyze_attack_surface(self, target: str, scan_type: str = "basic") -> Dict[str, Any]:
         """Analyze attack surface of a target"""
-        return await self.call_tool("attack_surface_analyzer", {
-            "target": target,
-            "scan_type": scan_type
+        # SERVER TOOL: scan_attack_surface(host: str)
+        # NOTE: scan_type is ignored as the server tool does not use it.
+        return await self.call_tool("scan_attack_surface", {
+            "host": target,
         })
     
     async def check_exposure(self, email_or_domain: str) -> Dict[str, Any]:
         """Check for email or domain exposure."""
-        return await self.call_tool("exposure_checker_tool", {"email_or_domain": email_or_domain})
+        # SERVER TOOL: exposure_checker_tool(email: str)
+        return await self.call_tool("exposure_checker_tool", {"email": email_or_domain})
 
     async def get_compliance_guidance(self, framework: str, topic: str = None) -> Dict[str, Any]:
         """Get compliance guidance for security frameworks"""
-        args = {"framework": framework}
-        if topic:
-            args["topic"] = topic
-        
-        return await self.call_tool("compliance_guidance", args)
+        # SERVER TOOL: compliance_guidance(framework, data_type, region, incident_type)
+        return await self.call_tool("compliance_guidance", {
+            "framework": framework,
+            "incident_type": topic, # Map topic to incident_type
+        })
     
     async def search_knowledge(self, query: str, domain: str = "cybersecurity") -> Dict[str, Any]:
         """Search the cybersecurity knowledge base"""
-        return await self.call_tool("knowledge_search", {
+        # SERVER TOOL: search_knowledge_base(query, domain, limit, min_score)
+        return await self.call_tool("search_knowledge_base", {
             "query": query,
             "domain": domain
         })
