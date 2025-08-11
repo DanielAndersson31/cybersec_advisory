@@ -8,7 +8,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 from langgraph.graph import MessagesState
 
-from agents.config import AgentRole
+from config.agent_config import AgentRole
 
 
 class TeamResponse(BaseModel):

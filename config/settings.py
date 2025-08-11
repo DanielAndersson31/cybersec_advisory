@@ -6,17 +6,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Centralized configuration management for all application settings"""
-    
-    # Core Project Configuration
-    project_name: str = Field(
-        ...,
-        env="PROJECT_NAME",
-        description="Name of the application project"
-    )
+    """
+    Main settings class for the application, loaded from .env file.
+    """
+    # General settings
+    APP_NAME: str = "Cybersecurity Multi-Agent Advisory System"
     environment: str = Field(
         ...,
-        env="ENVIRONMENT", 
+        env="ENVIRONMENT",
         description="Runtime environment (development, staging, production)"
     )
     log_level: str = Field(
@@ -24,7 +21,12 @@ class Settings(BaseSettings):
         env="LOG_LEVEL",
         description="Logging level for the application"
     )
-    
+    default_model: str = Field(
+        "gpt-4o",  # Sensible default
+        env="DEFAULT_MODEL",
+        description="Default language model for agents"
+    )
+
     # Application Server Settings
     api_host: str = Field(
         ...,

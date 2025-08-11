@@ -7,12 +7,15 @@ import logging
 from typing import Literal, Optional
 
 from langgraph.graph import StateGraph, END
-from langfuse.decorators import observe
+from langfuse import observe
 
 from workflow.state import WorkflowState
 from workflow.nodes import WorkflowNodes
 from workflow.fallbacks import ErrorHandler
 from agents.factory import AgentFactory
+from cybersec_mcp.cybersec_client import CybersecurityMCPClient
+from openai import AsyncOpenAI
+
 
 logger = logging.getLogger(__name__)
 
@@ -22,17 +25,19 @@ class CybersecurityTeamGraph:
     Orchestrates the cybersecurity team workflow using LangGraph.
     """
     
-    def __init__(self, llm, mcp_client, enable_quality_checks: bool = True):
+    def __init__(self, enable_quality_checks: bool = True):
         """
         Initialize the team workflow.
         
         Args:
-            llm: Language model for agents
-            mcp_client: MCP client for tools
             enable_quality_checks: Whether to enable quality gates
         """
-        # Create all agents
-        self.factory = AgentFactory(llm=llm, mcp_client=mcp_client)
+        # Create shared clients
+        llm_client = AsyncOpenAI()
+        mcp_client = CybersecurityMCPClient()
+
+        # Create all agents using the factory
+        self.factory = AgentFactory(llm_client=llm_client, mcp_client=mcp_client)
         self.agents = self.factory.create_all_agents()
         
         # Initialize workflow components

@@ -1,7 +1,7 @@
 # agents/incident_agent.py
 
-from agents.base_agent import BaseSecurityAgent
-from config import AgentRole
+from .base_agent import BaseSecurityAgent
+from config.agent_config import AgentRole
 from cybersec_mcp.cybersec_client import CybersecurityMCPClient
 from openai import AsyncOpenAI
 

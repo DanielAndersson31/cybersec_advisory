@@ -8,10 +8,8 @@ from typing import Any, Dict, List
 from openai import AsyncOpenAI
 from langfuse import observe
 
-# Assuming your config and cybersec_client are accessible from a parent directory.
-# Adjust the import path based on your project's root structure.
-from ..config import AgentRole, get_agent_config, get_agent_tools
-from ..cybersec_client import CybersecurityMCPClient
+from config.agent_config import AgentRole, get_agent_config, get_agent_tools
+from cybersec_mcp.cybersec_client import CybersecurityMCPClient
 
 logger = logging.getLogger(__name__)
 

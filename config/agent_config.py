@@ -6,7 +6,7 @@ Detailed implementations are in the agents/ folder.
 
 from typing import Dict, List, Any
 from enum import Enum
-from config.settings import settings
+from .settings import settings
 
 
 class AgentRole(Enum):
@@ -20,11 +20,11 @@ class AgentRole(Enum):
 
 AGENT_CONFIGS = {
     AgentRole.INCIDENT_RESPONSE: {
-        "name": "Sarah Chen",
+        "name": "Sarah Chen (Incident Response)",
         "role": AgentRole.INCIDENT_RESPONSE,
-        "model": settings.DEFAULT_MODEL,
+        "model": settings.default_model,
         "temperature": 0.1,
-        "max_tokens": 2000,
+        "max_tokens": 3000,
         "timeout": 30,
         "retry_attempts": 3,
         "confidence_threshold": 0.85,
@@ -32,11 +32,11 @@ AGENT_CONFIGS = {
         "enabled": True
     },
     AgentRole.PREVENTION: {
-        "name": "Alex Rodriguez",
+        "name": "Alex Rodriguez (Prevention)",
         "role": AgentRole.PREVENTION,
-        "model": settings.DEFAULT_MODEL,
+        "model": settings.default_model,
         "temperature": 0.2,
-        "max_tokens": 2000,
+        "max_tokens": 3000,
         "timeout": 30,
         "retry_attempts": 3,
         "confidence_threshold": 0.75,
@@ -44,11 +44,11 @@ AGENT_CONFIGS = {
         "enabled": True
     },
     AgentRole.THREAT_INTEL: {
-        "name": "Dr. Kim Park",
+        "name": "Dr. Kim Park (Threat Intel)",
         "role": AgentRole.THREAT_INTEL,
-        "model": settings.DEFAULT_MODEL,
-        "temperature": 0.15,
-        "max_tokens": 2000,
+        "model": settings.default_model,
+        "temperature": 0.3,
+        "max_tokens": 3500,
         "timeout": 45,
         "retry_attempts": 3,
         "confidence_threshold": 0.8,
@@ -56,10 +56,10 @@ AGENT_CONFIGS = {
         "enabled": True
     },
     AgentRole.COMPLIANCE: {
-        "name": "Maria Santos",
+        "name": "Maria Santos (Compliance)",
         "role": AgentRole.COMPLIANCE,
-        "model": settings.DEFAULT_MODEL,
-        "temperature": 0.05,
+        "model": settings.default_model,
+        "temperature": 0.0,
         "max_tokens": 2500,
         "timeout": 30,
         "retry_attempts": 3,
@@ -70,7 +70,7 @@ AGENT_CONFIGS = {
     AgentRole.COORDINATOR: {
         "name": "Team Coordinator",
         "role": AgentRole.COORDINATOR,
-        "model": settings.DEFAULT_MODEL,
+        "model": settings.default_model,
         "temperature": 0.3,
         "max_tokens": 1000,
         "timeout": 20,

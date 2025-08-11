@@ -5,7 +5,7 @@ Conversation manager with async checkpointer initialization.
 import logging
 from typing import Dict, Any, Optional
 
-from langfuse.decorators import observe
+from langfuse import observe
 
 from conversation.history import ConversationHistory
 from conversation.state_store import ConversationStateStore

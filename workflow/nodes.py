@@ -4,15 +4,15 @@ Integrated with your existing QualityGateSystem.
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from datetime import datetime
 
-from langfuse.decorators import observe
+from langfuse import observe
 
 from workflow.state import WorkflowState, TeamResponse
 from workflow.router import QueryRouter
 from workflow.quality_gates import QualityGateSystem  # Your existing quality gates
-from agents.config import AgentRole
+from config.agent_config import AgentRole
 
 logger = logging.getLogger(__name__)
 

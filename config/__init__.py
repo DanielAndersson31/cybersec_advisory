@@ -1,10 +1,26 @@
-"""Configuration package exports for easy importing"""
+"""
+Configuration package for the Cybersecurity Multi-Agent Advisory System.
+Exports key configuration objects and functions for easy access.
+"""
 
-from config.settings import settings
+from .settings import settings
+from .langfuse_settings import (
+    langfuse_config,
+    get_langfuse_client,
+    get_evaluator_config,
+)
+from .agent_config import (
+    AgentRole,
+    get_agent_config,
+    get_agent_tools,
+)
 
-
-# Main exports that other modules should use
 __all__ = [
-    # Core settings instance - single source of truth
     "settings",
+    "langfuse_config",
+    "get_langfuse_client",
+    "get_evaluator_config",
+    "AgentRole",
+    "get_agent_config",
+    "get_agent_tools",
 ]

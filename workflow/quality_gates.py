@@ -1,9 +1,11 @@
 import json
 import os
+import logging
 from typing import Dict, Any, List
 
-from langchain_openai import ChatOpenAl
-from langfuse.decorators import observe
+from langchain_openai import ChatOpenAI
+from langfuse import observe
+from openai import AsyncOpenAI
 
 # Import the global Langfuse configuration from your config directory
 from config.langfuse_settings import langfuse_config
@@ -19,7 +21,7 @@ class QualityGateSystem:
         """Initializes the Quality Gate System."""
         # Initialize the LLM client used for all evaluation tasks.
         # Temperature is set to 0 for consistent, objective outputs.
-        self.evaluator_llm = ChatOpenAl(
+        self.evaluator_llm = ChatOpenAI(
             model="gpt-4o",
             temperature=0,
             openai_api_key=os.getenv("OPENAI_API_KEY")

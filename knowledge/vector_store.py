@@ -49,9 +49,6 @@ class VectorStoreManager:
         # Set dimensions based on model
         self.embedding_dim = 384 if "small" in model_name else 768
         
-        # Set the model in Qdrant client for automatic embedding
-        self.client.set_model(model_name)
-        
         logger.info(f"VectorStoreManager initialized with {model_name} (dim: {self.embedding_dim})")
 
     def get_all_collection_names(self) -> List[str]:

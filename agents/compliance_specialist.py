@@ -1,7 +1,7 @@
 # agents/compliance_agent.py
 
 from .base_agent import BaseSecurityAgent
-from ..config import AgentRole
+from config.agent_config import AgentRole
 from cybersec_mcp.cybersec_client import CybersecurityMCPClient
 from openai import AsyncOpenAI
 

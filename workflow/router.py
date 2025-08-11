@@ -6,7 +6,7 @@ Simple keyword-based routing with expertise matching.
 import logging
 from typing import List, Dict, Any
 
-from agents.config import AgentRole, EXPERTISE_DOMAINS
+from config.agent_config import AgentRole, EXPERTISE_DOMAINS, INTERACTION_RULES
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,6 @@ class QueryRouter:
             return AgentRole.INCIDENT_RESPONSE  # Default
         
         # Use speaking order from config
-        from agents.config import INTERACTION_RULES
         speaking_order = INTERACTION_RULES.get("speaking_order", [])
         
         # Find first agent in speaking order
