@@ -1,5 +1,5 @@
 """
-Conversation manager that uses LangGraph's built-in checkpointing.
+Conversation manager with async checkpointer initialization.
 """
 
 import logging
@@ -18,39 +18,34 @@ class ConversationManager:
     Manager that coordinates conversation using LangGraph checkpointing.
     """
     
-    def __init__(self, workflow, use_persistent_storage: bool = True):
-        """
-        Initialize with workflow that already has LangGraph checkpointing.
-        
-        Args:
-            workflow: CybersecurityTeamGraph with checkpointer
-            use_persistent_storage: Use SQLite (True) or memory (False)
-        """
+    def __init__(self, workflow):
+        """Initialize with workflow."""
         self.workflow = workflow
-        
-        # If workflow doesn't have a checkpointer, add one
-        if not hasattr(workflow, 'checkpointer') or workflow.checkpointer is None:
-            store = ConversationStateStore(persist=use_persistent_storage)
-            workflow.checkpointer = store.get_checkpointer()
-            workflow.app = workflow.graph.compile(checkpointer=workflow.checkpointer)
-            logger.info("Added checkpointer to workflow")
-        
-        # Local cache for quick access
         self.history_cache: Dict[str, ConversationHistory] = {}
+        self.initialized = False
+    
+    async def initialize(self, use_persistent_storage: bool = True, db_path: str = "./conversations.db"):
+        """
+        Async initialization to set up checkpointer.
+        Must be called before using the manager.
+        """
+        # Create state store with async checkpointer
+        store = ConversationStateStore()
+        checkpointer = await store.initialize(persist=use_persistent_storage, db_path=db_path)
+        
+        # Compile workflow with checkpointer
+        self.workflow.compile_with_checkpointer(checkpointer)
+        
+        self.initialized = True
+        logger.info("Conversation manager initialized with async checkpointer")
     
     @observe(name="chat")
     async def chat(self, message: str, thread_id: str = "default") -> str:
-        """
-        Chat interface - LangGraph handles all persistence via thread_id.
+        """Chat interface."""
+        if not self.initialized:
+            raise RuntimeError("ConversationManager not initialized. Call await manager.initialize() first.")
         
-        Args:
-            message: User message
-            thread_id: Conversation thread ID (used by LangGraph for persistence)
-            
-        Returns:
-            Assistant response
-        """
-        # Local history for context
+        # Rest stays the same...
         if thread_id not in self.history_cache:
             self.history_cache[thread_id] = ConversationHistory()
         
@@ -58,7 +53,6 @@ class ConversationManager:
         history.add_user_message(message)
         
         try:
-            # LangGraph automatically loads/saves state based on thread_id
             response = await self.workflow.get_team_response(
                 query=message,
                 thread_id=thread_id
@@ -70,18 +64,3 @@ class ConversationManager:
         except Exception as e:
             logger.error(f"Error in chat: {e}")
             return "I apologize, but I encountered an error processing your request."
-    
-    async def get_state(self, thread_id: str) -> Optional[Dict[str, Any]]:
-        """Get conversation state from LangGraph."""
-        config = {"configurable": {"thread_id": thread_id}}
-        state = await self.workflow.app.aget_state(config)
-        return state.values if state else None
-    
-    async def clear(self, thread_id: str):
-        """Clear conversation."""
-        if thread_id in self.history_cache:
-            del self.history_cache[thread_id]
-        
-        # Reset in LangGraph
-        config = {"configurable": {"thread_id": thread_id}}
-        await self.workflow.app.aupdate_state(config, {"messages": []})

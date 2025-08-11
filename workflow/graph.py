@@ -4,11 +4,10 @@ Orchestrates how agents collaborate to answer queries.
 """
 
 import logging
-from typing import Literal
+from typing import Literal, Optional
 
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
-from langfuse import observe
+from langfuse.decorators import observe
 
 from workflow.state import WorkflowState
 from workflow.nodes import WorkflowNodes
@@ -45,11 +44,27 @@ class CybersecurityTeamGraph:
         # Build the graph
         self.graph = self._build_graph()
         
-        # Add checkpointing for conversation memory
-        self.checkpointer = MemorySaver()
-        self.app = self.graph.compile(checkpointer=self.checkpointer)
+        # Don't compile yet - let conversation manager add checkpointer
+        self.app = None
+        self.checkpointer = None
         
         logger.info(f"Team workflow initialized with {len(self.agents)} agents")
+    
+    def compile_with_checkpointer(self, checkpointer):
+        """
+        Compile the graph with a specific checkpointer.
+        This is called by the conversation manager.
+        
+        Args:
+            checkpointer: LangGraph checkpointer (AsyncSqliteSaver or MemorySaver)
+            
+        Returns:
+            Compiled app
+        """
+        self.checkpointer = checkpointer
+        self.app = self.graph.compile(checkpointer=checkpointer)
+        logger.info(f"Workflow compiled with {type(checkpointer).__name__}")
+        return self.app
     
     def _build_graph(self) -> StateGraph:
         """
@@ -162,6 +177,13 @@ class CybersecurityTeamGraph:
         Returns:
             Team's response
         """
+        # Check if workflow has been compiled
+        if self.app is None:
+            raise RuntimeError(
+                "Workflow not compiled. Use compile_with_checkpointer() or "
+                "initialize through ConversationManager."
+            )
+        
         try:
             # Initialize state
             initial_state = {
@@ -190,3 +212,43 @@ class CybersecurityTeamGraph:
         except Exception as e:
             logger.error(f"Workflow error: {e}")
             return self.error_handler.get_fallback_response(str(e))
+    
+    def is_compiled(self) -> bool:
+        """
+        Check if the workflow has been compiled with a checkpointer.
+        
+        Returns:
+            True if compiled, False otherwise
+        """
+        return self.app is not None
+    
+    async def get_state(self, thread_id: str) -> Optional[dict]:
+        """
+        Get the current state for a thread from the checkpointer.
+        
+        Args:
+            thread_id: Thread identifier
+            
+        Returns:
+            State dictionary or None
+        """
+        if not self.app:
+            return None
+        
+        config = {"configurable": {"thread_id": thread_id}}
+        state = await self.app.aget_state(config)
+        return state.values if state else None
+    
+    async def update_state(self, thread_id: str, updates: dict):
+        """
+        Update the state for a thread in the checkpointer.
+        
+        Args:
+            thread_id: Thread identifier
+            updates: State updates to apply
+        """
+        if not self.app:
+            raise RuntimeError("Workflow not compiled")
+        
+        config = {"configurable": {"thread_id": thread_id}}
+        await self.app.aupdate_state(config, updates)
