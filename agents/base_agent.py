@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
 from openai import AsyncOpenAI
-from langfuse.decorators import observe
+from langfuse import observe
 
 # Assuming your config and cybersec_client are accessible from a parent directory.
 # Adjust the import path based on your project's root structure.

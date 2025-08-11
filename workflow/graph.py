@@ -8,7 +8,7 @@ from typing import Literal
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
-from langfuse.decorators import observe
+from langfuse import observe
 
 from workflow.state import WorkflowState
 from workflow.nodes import WorkflowNodes
