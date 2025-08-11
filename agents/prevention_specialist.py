@@ -2,7 +2,7 @@
 
 from .base_agent import BaseSecurityAgent
 from ..config import AgentRole
-from mcp.cybersec_client import CybersecurityMCPClient
+from cybersec_mcp.cybersec_client import CybersecurityMCPClient
 from openai import AsyncOpenAI
 
 

@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 # Assuming your config and client are accessible from a parent directory.
 # Adjust import paths based on your project's final structure.
 from config import AgentRole, get_enabled_agents
-from mcp.cybersec_client import CybersecurityMCPClient
+from cybersec_mcp.cybersec_client import CybersecurityMCPClient
 
 # Import the base and all specialist agent classes
 from .base_agent import BaseSecurityAgent

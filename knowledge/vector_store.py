@@ -6,7 +6,7 @@ from typing import List, Dict, Any
 from langchain_openai import OpenAIEmbeddings
 from qdrant_client import QdrantClient, models
 
-from config.settings import QDRANT_HOST, QDRANT_API_KEY, OPENAI_API_KEY
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,20 +28,28 @@ class VectorStoreManager:
     """
     def __init__(self):
         """Initializes the Qdrant client and the OpenAI embedding model."""
-        if not all([QDRANT_HOST, QDRANT_API_KEY, OPENAI_API_KEY]):
-            logger.error("Required credentials for Qdrant or OpenAI are not set.")
-            raise ValueError("Qdrant or OpenAI API credentials not found in environment.")
-
-        self.client = QdrantClient(host=QDRANT_HOST, api_key=QDRANT_API_KEY)
-        
-        self.embeddings = OpenAIEmbeddings(
-            model="text-embedding-3-small", 
-            openai_api_key=OPENAI_API_KEY
+        self.client = QdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.get_secret("qdrant_api_key")
         )
         
-        self.embedding_dim = 1536
+        self.embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-large", 
+            openai_api_key=settings.get_secret("openai_api_key")
+        )
+        
+        self.embedding_dim = 3072 # Dimension for text-embedding-3-large
         
         logger.info(f"VectorStoreManager initialized with OpenAI embeddings (dim: {self.embedding_dim})")
+
+    def get_all_collection_names(self) -> List[str]:
+        """Retrieve a list of all collection names from Qdrant."""
+        try:
+            collections_response = self.client.get_collections()
+            return [col.name for col in collections_response.collections]
+        except Exception as e:
+            logger.exception(f"Failed to retrieve collection names: {e}")
+            return []
 
     def create_collection_if_not_exists(self, collection_name: str):
         """
@@ -111,22 +119,25 @@ class VectorStoreManager:
         """
         try:
             query_embedding = self.embeddings.embed_query(query)
-            search_results = self.client.search(
+            
+            # Use self.client.search, which is the correct method for pre-computed vectors.
+            hits = self.client.search(
                 collection_name=collection_name,
                 query_vector=query_embedding,
                 limit=k,
                 with_payload=True
             )
             
-            formatted_results = [
-                {
-                    "doc_id": result.id,
-                    "content": result.payload.get("content", ""),
-                    "metadata": result.payload.get("metadata", {}),
-                    "score": result.score
-                }
-                for result in search_results
-            ]
+            # Process ScoredPoint objects from the search result
+            formatted_results = []
+            for hit in hits:
+                payload = hit.payload or {}
+                formatted_results.append({
+                    "doc_id": hit.id,
+                    "content": payload.get("content", ""),
+                    "metadata": payload.get("metadata", {}),
+                    "score": hit.score,
+                })
             
             logger.info(f"Search in '{collection_name}' returned {len(formatted_results)} results.")
             return formatted_results

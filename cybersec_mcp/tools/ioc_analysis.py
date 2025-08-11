@@ -2,12 +2,11 @@
 Simple IOC analysis tool using VirusTotal API with Pydantic models.
 """
 
-import os
-import re
-import httpx
-from typing import List, Optional, Literal
-from pydantic import BaseModel, Field
 import logging
+from typing import List, Optional, Literal
+from pydantic import BaseModel
+import httpx
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,85 +37,44 @@ class IOCAnalysisResponse(BaseModel):
     error: Optional[str] = None
 
 
-class IOCAnalysisTool:
-    """Analyze IOCs using VirusTotal API"""
-    
+class IOCAnalyzer:
+    """Tool for analyzing indicators of compromise using VirusTotal API"""
+
     def __init__(self):
-        """Initialize with VirusTotal API key"""
-        self.vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
+        """Initialize VirusTotal client"""
+        self.vt_api_key = settings.virustotal_api_key
         if not self.vt_api_key:
-            logger.warning("VIRUSTOTAL_API_KEY not set - IOC analysis will be limited")
-        
-        self.vt_base_url = "https://www.virustotal.com/api/v3"
-        
-        # Simple patterns to identify IOC types
-        self.patterns = {
-            "ip": re.compile(r'^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$'),
-            "domain": re.compile(r'^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$'),
-            "url": re.compile(r'^https?://'),
-            "md5": re.compile(r'^[a-fA-F0-9]{32}$'),
-            "sha1": re.compile(r'^[a-fA-F0-9]{40}$'),
-            "sha256": re.compile(r'^[a-fA-F0-9]{64}$')
-        }
-    
-    async def analyze(
-        self,
-        indicators: List[str],
-        check_reputation: bool = True,
-        enrich_data: bool = True,
-        include_context: bool = True
-    ) -> IOCAnalysisResponse:
+            raise ValueError("VIRUSTOTAL_API_KEY not configured in settings")
+        self.base_url = "https://www.virustotal.com/api/v3"
+        self.client = httpx.AsyncClient()
+
+    async def analyze_indicator(self, indicator: str) -> IOCResult:
         """
-        Analyze indicators using VirusTotal.
+        Analyze a single indicator using VirusTotal.
         
         Args:
-            indicators: List of IOCs to check
-            check_reputation: Check against threat intelligence
-            enrich_data: Not used (kept for compatibility)
-            include_context: Not used (kept for compatibility)
+            indicator: The indicator to analyze (IP, domain, URL, MD5, SHA1, SHA256)
             
         Returns:
-            IOCAnalysisResponse with typed results
+            An IOCResult object with the analysis findings.
         """
         try:
-            results = []
+            indicator_type = self._determine_type(indicator)
             
-            for indicator in indicators:
-                # Determine type
-                indicator_type = self._determine_type(indicator)
-                
-                if indicator_type == "unknown":
-                    results.append(IOCResult(
-                        indicator=indicator,
-                        type="unknown",
-                        error="Could not determine indicator type"
-                    ))
-                    continue
-                
-                # Check with VirusTotal if API key available
-                if check_reputation and self.vt_api_key:
-                    result = await self._check_virustotal(indicator, indicator_type)
-                else:
-                    result = IOCResult(
-                        indicator=indicator,
-                        type=indicator_type,
-                        classification="unknown",
-                        error="No API key available"
-                    )
-                
-                results.append(result)
+            if indicator_type == "unknown":
+                return IOCResult(
+                    indicator=indicator,
+                    type="unknown",
+                    error="Could not determine indicator type"
+                )
             
-            return IOCAnalysisResponse(
-                total_indicators=len(indicators),
-                results=results
-            )
+            return await self._check_virustotal(indicator, indicator_type)
             
         except Exception as e:
             logger.error(f"IOC analysis error: {str(e)}")
-            return IOCAnalysisResponse(
-                status="error",
-                total_indicators=len(indicators),
-                results=[],
+            return IOCResult(
+                indicator=indicator,
+                type="unknown",
                 error=str(e)
             )
     
@@ -132,35 +90,34 @@ class IOCAnalysisTool:
     
     async def _check_virustotal(self, indicator: str, indicator_type: str) -> IOCResult:
         """Check indicator with VirusTotal API"""
-        headers = {"x-apikey": self.vt_api_key}
+        headers = {"x-apikey": self.vt_api_key.get_secret_value()}
         
         try:
             # Build URL based on type
             if indicator_type == "ip":
-                url = f"{self.vt_base_url}/ip_addresses/{indicator}"
+                url = f"{self.base_url}/ip_addresses/{indicator}"
             elif indicator_type == "domain":
-                url = f"{self.vt_base_url}/domains/{indicator}"
+                url = f"{self.base_url}/domains/{indicator}"
             elif indicator_type == "url":
                 # URLs need to be base64 encoded
                 import base64
                 url_id = base64.urlsafe_b64encode(indicator.encode()).decode().strip("=")
-                url = f"{self.vt_base_url}/urls/{url_id}"
+                url = f"{self.base_url}/urls/{url_id}"
             elif indicator_type in ["md5", "sha1", "sha256"]:
-                url = f"{self.vt_base_url}/files/{indicator}"
+                url = f"{self.base_url}/files/{indicator}"
             else:
                 return IOCResult(
                     indicator=indicator,
                     type=indicator_type,
+                    classification="unknown",
                     error="Unsupported type for VirusTotal"
                 )
             
             # Make request
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=headers)
+            response = await self.client.get(url, headers=headers)
             
             if response.status_code == 200:
-                data = response.json()
-                return self._parse_vt_response(indicator, indicator_type, data)
+                return self._parse_vt_response(indicator, indicator_type, response.json())
             elif response.status_code == 404:
                 return IOCResult(
                     indicator=indicator,
@@ -217,11 +174,11 @@ class IOCAnalysisTool:
 
 
 # Create singleton instance
-ioc_analysis_tool = IOCAnalysisTool()
+ioc_analysis_tool = IOCAnalyzer()
 
 
 # Export function - returns dict for compatibility
 async def analyze_indicators(**kwargs) -> dict:
     """IOC analysis function that MCP servers will import"""
-    response = await ioc_analysis_tool.analyze(**kwargs)
+    response = await ioc_analysis_tool.analyze_indicator(**kwargs)
     return response.model_dump()

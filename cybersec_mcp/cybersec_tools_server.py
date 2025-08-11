@@ -4,23 +4,20 @@ Complete Cybersecurity MCP Server
 Provides all cybersecurity tools for the multi-agent advisory system.
 """
 
-from fastmcp import FastMCP
-from typing import Dict, Any, List, Optional
 import logging
-import asyncio
-
-# Import configuration class
-from mcp.config import config
-
-# Import all the actual tool functions
-from mcp.tools.web_search import web_search
-from mcp.tools.knowledge_search import knowledge_search
-from mcp.tools.ioc_analysis import analyze_indicators
-from mcp.tools.vulnerability_search import search_vulnerabilities
-from mcp.tools.attack_surface_analyzer import analyze_attack_surface
-from mcp.tools.threat_feeds import search_threat_feeds
-from mcp.tools.compliance_guidance import get_compliance_guidance
-from mcp.tools.breach_monitoring import check_email
+from typing import Dict, Any, List, Optional
+from fastmcp import FastMCP
+from config.settings import settings # Import the Pydantic settings
+from cybersec_mcp.tools import (
+    web_search,
+    knowledge_search,
+    analyze_indicators,
+    search_vulnerabilities,
+    analyze_attack_surface,
+    search_threat_feeds,
+    get_compliance_guidance,
+    check_exposure
+)
 
 # Configure logging
 logging.basicConfig(
@@ -29,22 +26,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Validate configuration before starting
-config.validate_or_raise()
-
-# Initialize FastMCP server using config class
+# Initialize FastMCP server directly from Pydantic settings
 mcp = FastMCP(
-    name=config.server["name"],
-    host=config.server["host"],
-    port=config.server["port"],
-    timeout=config.server["timeout"],
-    description=config.server["description"],
+    name=settings.project_name,
+    instructions="Complete cybersecurity toolset for multi-agent advisory system",
+    version="1.0.0"
 )
 
-# Set server metadata from config
+# Set server metadata (optional, can be simplified or expanded)
 mcp.metadata = {
-    **config.server,
-    "domains": list(config.tool_categories.keys())
+    "project_name": settings.project_name,
+    "environment": settings.environment,
+    "author": "Cybersec AI",
 }
 
 
@@ -58,7 +51,7 @@ async def search_web(
     max_results: int = 10,
     search_type: str = "general",
     include_domains: Optional[List[str]] = None,
-    days: Optional[int] = None
+    time_range: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Search the web for cybersecurity information with enhanced querying.
@@ -68,7 +61,7 @@ async def search_web(
         max_results: Maximum number of results to return (default: 10)
         search_type: Type of search - "general", "news", or "research" (default: "general")
         include_domains: List of specific domains to search within
-        days: Limit results to last N days
+        time_range: Filter by time - 'd' (day), 'w' (week), 'm' (month), 'y' (year)
     
     Returns:
         Dict containing search results with status, query, and results list
@@ -80,7 +73,7 @@ async def search_web(
             max_results=max_results,
             search_type=search_type,
             include_domains=include_domains,
-            days=days
+            time_range=time_range
         )
         logger.info(f"Web search completed: {result.get('total_results', 0)} results")
         return result
@@ -98,8 +91,7 @@ async def search_web(
 async def search_knowledge_base(
     query: str,
     domain: Optional[str] = None,
-    limit: int = 5,
-    min_score: float = 0.7
+    limit: int = 5
 ) -> Dict[str, Any]:
     """
     Search the cybersecurity knowledge base for domain-specific information.
@@ -109,7 +101,6 @@ async def search_knowledge_base(
         domain: Knowledge domain to search ("incident_response", "prevention", 
                 "threat_intelligence", "compliance") - searches all if None
         limit: Maximum number of results to return (default: 5)
-        min_score: Minimum similarity score threshold (default: 0.7)
     
     Returns:
         Dict containing search results with status, query, and results list
@@ -119,8 +110,7 @@ async def search_knowledge_base(
         result = await knowledge_search(
             query=query,
             domain=domain,
-            limit=limit,
-            min_score=min_score
+            limit=limit
         )
         logger.info(f"Knowledge search completed: {len(result.get('results', []))} results")
         return result
@@ -140,7 +130,7 @@ async def search_knowledge_base(
 # =============================================================================
 
 @mcp.tool()
-async def analyze_indicators(
+async def analyze_ioc(
     indicators: List[str],
     check_reputation: bool = True,
     enrich_data: bool = True,
@@ -186,35 +176,20 @@ async def analyze_indicators(
 
 
 @mcp.tool()
-async def check_breach_exposure(email: str) -> Dict[str, Any]:
+async def exposure_checker_tool(email: str) -> dict:
     """
-    Check if an email address has been exposed in known data breaches.
-    
+    Checks if an email address has been exposed in a data breach using the XposedOrNot API.
+    This tool is a replacement for the previous HIBP-based breach monitoring.
+
     Args:
-        email: Email address to check against breach databases
-    
+        email: The email address to check for exposure.
+
     Returns:
-        Dict containing breach exposure results with status, email, breach details
+        A dictionary containing the exposure check results.
     """
-    try:
-        logger.info(f"Breach exposure check: {email}")
-        result = await check_email(email=email)
-        
-        if result.get("status") == "success":
-            breach_count = result.get("breach_count", 0)
-            logger.info(f"Breach check completed: {breach_count} breaches found")
-        
-        return result
-    except Exception as e:
-        logger.error(f"Breach monitoring error for {email}: {str(e)}")
-        return {
-            "status": "error",
-            "query_email": email,
-            "is_breached": False,
-            "breach_count": 0,
-            "breaches": [],
-            "error": str(e)
-        }
+    logger.info(f"Checking exposure for email: {email}")
+    response = await check_exposure(email=email)
+    return response
 
 
 # =============================================================================
@@ -222,9 +197,10 @@ async def check_breach_exposure(email: str) -> Dict[str, Any]:
 # =============================================================================
 
 @mcp.tool()
-async def search_threat_feeds(
+async def get_threat_feeds(
     query: str,
-    limit: int = 10
+    limit: int = 10,
+    fetch_full_details: bool = False
 ) -> Dict[str, Any]:
     """
     Search AlienVault OTX threat intelligence feeds for IOCs and campaigns.
@@ -232,15 +208,17 @@ async def search_threat_feeds(
     Args:
         query: Search query (malware family, threat actor, campaign name, etc.)
         limit: Maximum number of threat reports to return (default: 10)
+        fetch_full_details: Set to True to retrieve full details including all IOCs (slower).
     
     Returns:
         Dict containing threat intelligence results with status, query, and threat reports
     """
     try:
-        logger.info(f"Threat intelligence search: {query}")
+        logger.info(f"Threat intelligence search: {query} (details: {fetch_full_details})")
         result = await search_threat_feeds(
             query=query,
-            limit=limit
+            limit=limit,
+            fetch_full_details=fetch_full_details
         )
         
         if result.get("status") == "success":
@@ -264,7 +242,7 @@ async def search_threat_feeds(
 # =============================================================================
 
 @mcp.tool()
-async def search_vulnerabilities(
+async def find_vulnerabilities(
     query: str,
     severity_filter: Optional[List[str]] = None,
     date_range: Optional[str] = None,
@@ -315,7 +293,7 @@ async def search_vulnerabilities(
 
 
 @mcp.tool()
-async def analyze_attack_surface(host: str) -> Dict[str, Any]:
+async def scan_attack_surface(host: str) -> Dict[str, Any]:
     """
     Analyze the external attack surface of a host or domain using ZoomEye API.
     
@@ -352,7 +330,7 @@ async def analyze_attack_surface(host: str) -> Dict[str, Any]:
 # =============================================================================
 
 @mcp.tool()
-async def get_compliance_guidance(
+async def compliance_guidance(
     framework: str,
     data_type: Optional[str] = None,
     region: Optional[str] = None,
@@ -400,34 +378,29 @@ async def get_compliance_guidance(
 @mcp.tool()
 async def get_server_status() -> Dict[str, Any]:
     """
-    Get the current status of the MCP server and available tools.
-    
-    Returns:
-        Dict containing server status, available tools, and metadata
+    Get the current status of the MCP server.
+    NOTE: Tool categories are now hardcoded as the settings object is for secrets.
     """
     try:
-        # Build tools list manually
-        tools = []
-        for category, tool_names in config.tool_categories.items():
-            for tool_name in tool_names:
-                tools.append({
-                    "name": tool_name,
-                    "category": category
-                })
+        tool_info = {
+            "general": ["search_web", "knowledge_search"],
+            "incident_response": ["analyze_indicators", "check_exposure_tool"],
+            "threat_intelligence": ["get_threat_feeds"],
+            "prevention": ["find_vulnerabilities", "scan_attack_surface"],
+            "compliance": ["compliance_guidance"]
+        }
+        flat_tools = [tool for sublist in tool_info.values() for tool in sublist]
         
         return {
             "status": "success",
-            "server": config.server,
-            "tools": tools,
-            "total_tools": len(tools)
+            "server_name": settings.project_name,
+            "version": "1.0.0",
+            "total_tools": len(flat_tools)
         }
         
     except Exception as e:
         logger.error(f"Server status error: {str(e)}")
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+        return {"status": "error", "error": str(e)}
 
 
 @mcp.tool()
@@ -447,9 +420,8 @@ async def health_check() -> Dict[str, Any]:
                 "virustotal": "unknown",
                 "zoomeye": "unknown",
                 "otx_alienvault": "unknown",
-                "haveibeenpwned": "unknown"
+                "xposedornot": "unknown"
             },
-            "configuration_valid": config.validate(),
             "timestamp": "health_check_timestamp"
         }
         
@@ -473,32 +445,30 @@ async def health_check() -> Dict[str, Any]:
 # =============================================================================
 
 def main():
-    """Main function to start the MCP server."""
+    """Main entry point for starting the server."""
     try:
         logger.info("=" * 60)
-        logger.info("Starting Cybersecurity MCP Server")
+        logger.info("🚀 Starting Cybersecurity MCP Server...")
+        logger.info(f"Server: {mcp.name} v1.0.0")
+        logger.info(f"URL: http://{settings.mcp_server_host}:{settings.mcp_server_port}")
+        logger.info(f"Log Level: {settings.log_level}")
         logger.info("=" * 60)
         
-        logger.info(f"Server: {config.server['name']} v{config.server['version']}")
-        logger.info(f"Description: {config.server['description']}")
-        logger.info(f"Categories: {', '.join(config.tool_categories.keys())}")
-        logger.info(f"URL: {config.get_server_url()}")
+        # Start the server using host and port from Pydantic settings
+        mcp.run(
+            transport="http",
+            host=settings.mcp_server_host,
+            port=settings.mcp_server_port,
+            path="/cybersec_mcp",
+            log_level=settings.log_level.lower()
+        )
         
-        if not config.validate():
-            logger.warning("Configuration validation failed")
-        
-        logger.info("=" * 60)
-        
-        # Start the server
-        mcp.run()
-        
-    except KeyboardInterrupt:
-        logger.info("Server shutdown requested by user")
     except Exception as e:
-        logger.error(f"Server startup error: {str(e)}")
-        raise
+        logger.error(f"💥 Server failed to start: {e}", exc_info=True)
     finally:
-        logger.info("Cybersecurity MCP Server stopped")
+        logger.info("=" * 60)
+        logger.info("🛑 Cybersecurity MCP Server stopped")
+        logger.info("=" * 60)
 
 
 if __name__ == "__main__":

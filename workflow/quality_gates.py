@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAl
 from langfuse.decorators import observe
 
 # Import the global Langfuse configuration from your config directory
-from ..config.langfuse_config import langfuse_config
+from config.langfuse_settings import langfuse_config
 
 class QualityGateSystem:
     """
