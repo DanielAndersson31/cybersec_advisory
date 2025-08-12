@@ -28,14 +28,14 @@ logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server directly from Pydantic settings
 mcp = FastMCP(
-    name=settings.project_name,
+    name=settings.APP_NAME,
     instructions="Complete cybersecurity toolset for multi-agent advisory system",
     version="1.0.0"
 )
 
 # Set server metadata (optional, can be simplified or expanded)
 mcp.metadata = {
-    "project_name": settings.project_name,
+    "project_name": settings.APP_NAME,
     "environment": settings.environment,
     "author": "Cybersec AI",
 }
@@ -393,7 +393,7 @@ async def get_server_status() -> Dict[str, Any]:
         
         return {
             "status": "success",
-            "server_name": settings.project_name,
+            "server_name": settings.APP_NAME,
             "version": "1.0.0",
             "total_tools": len(flat_tools)
         }

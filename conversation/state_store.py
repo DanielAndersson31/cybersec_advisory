@@ -12,19 +12,42 @@ logger = logging.getLogger(__name__)
 
 class ConversationStateStore:
     """
-    Wrapper for LangGraph async checkpointers.
+    Wrapper for LangGraph async checkpointers that properly manages the resource lifecycle.
     """
-    
+
+    def __init__(self):
+        self.checkpointer = None
+        self._checkpointer_context = None
+
     async def initialize(self, persist: bool = True, db_path: str = "./conversations.db"):
-        """Initialize async checkpointer."""
+        """
+        Creates the checkpointer resource but does not enter the context.
+        This must be called before get_checkpointer.
+        """
         if persist:
-            # Use AsyncSqliteSaver for async operations
-            self.checkpointer = await AsyncSqliteSaver.from_conn_string(db_path)
-            self.storage_type = "sqlite"
-            logger.info(f"Using AsyncSqlite persistence: {db_path}")
+            # Create the context manager for the checkpointer
+            self._checkpointer_context = AsyncSqliteSaver.from_conn_string(db_path)
+            logger.info(f"AsyncSqliteSaver context created for {db_path}")
         else:
+            # MemorySaver doesn't need a context
             self.checkpointer = MemorySaver()
-            self.storage_type = "memory"
             logger.info("Using in-memory storage")
-        
+
+    async def get_checkpointer(self) -> Optional[AsyncSqliteSaver | MemorySaver]:
+        """
+        Enters the async context if needed and returns the usable checkpointer object.
+        """
+        if self._checkpointer_context and not self.checkpointer:
+            # Manually enter the async context and store the checkpointer instance
+            self.checkpointer = await self._checkpointer_context.__aenter__()
+            logger.info("Entered AsyncSqliteSaver context, checkpointer is active.")
         return self.checkpointer
+
+    async def cleanup(self):
+        """
+        Cleans up resources by exiting the async context, which closes the connection.
+        """
+        if self._checkpointer_context:
+            await self._checkpointer_context.__aexit__(None, None, None)
+            self.checkpointer = None
+            logger.info("Exited AsyncSqliteSaver context, connection is closed.")

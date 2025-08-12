@@ -238,9 +238,21 @@ def get_agent_config(role: AgentRole) -> Dict[str, Any]:
 
 
 def get_agent_tools(role: AgentRole) -> List[Dict[str, Any]]:
-    """Gets the full definitions for all tools an agent is permitted to use."""
+    """
+    Gets the full, correctly formatted tool definitions for an agent.
+    Wraps the function definition with the required 'type: "function"' structure.
+    """
     allowed_tool_names = AGENT_TOOL_PERMISSIONS.get(role, [])
-    return [TOOL_DEFINITIONS[tool_name] for tool_name in allowed_tool_names if tool_name in TOOL_DEFINITIONS]
+    formatted_tools = []
+    for tool_name in allowed_tool_names:
+        if tool_name in TOOL_DEFINITIONS:
+            tool_def = TOOL_DEFINITIONS[tool_name]
+            # Wrap the existing definition in the required format
+            formatted_tools.append({
+                "type": "function",
+                "function": tool_def
+            })
+    return formatted_tools
 
 
 def get_quality_threshold(role: AgentRole) -> float:

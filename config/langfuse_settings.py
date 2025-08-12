@@ -1,4 +1,3 @@
-import os
 from langfuse import Langfuse
 from typing import Dict, Any, Optional
 from datetime import datetime
@@ -11,9 +10,9 @@ class LangfuseConfig:
     
     def __init__(self):
         # Use settings from your settings.py file
-        self.public_key = settings.LANGFUSE_PUBLIC_KEY
-        self.secret_key = settings.LANGFUSE_SECRET_KEY
-        self.host = settings.LANGFUSE_HOST
+        self.public_key = settings.get_secret("langfuse_public_key")
+        self.secret_key = settings.get_secret("langfuse_secret_key")
+        self.host = settings.langfuse_host
         
         # Validate that we have the required keys
         if not all([self.public_key, self.secret_key]):

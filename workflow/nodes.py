@@ -112,33 +112,33 @@ class WorkflowNodes:
             return state
         
         try:
-            # Build context from previous responses
-            context = None
-            if state["team_responses"]:
-                context = {
-                    "previous_responses": [
-                        {
-                            "agent": resp.agent_name,
-                            "summary": resp.content[:200] + "..." if len(resp.content) > 200 else resp.content
-                        }
-                        for resp in state["team_responses"]
-                    ]
-                }
+            # The agent expects a list of messages.
+            # We construct this from the current query and previous responses.
+            messages = []
+            if state.get("team_responses"):
+                for resp in state["team_responses"]:
+                    # Use the agent's role as a sanitized name for the API
+                    sanitized_name = resp.agent_role.value
+                    messages.append({"role": "assistant", "name": sanitized_name, "content": resp.content})
             
+            # Add the current user query
+            messages.append({"role": "user", "content": state["query"]})
+
             # Get agent response
             logger.info(f"Consulting {agent.name}...")
-            response = await agent.respond(
-                query=state["query"],
-                context=context
-            )
+            response_data = await agent.respond(messages=messages)
             
+            # The response from the agent is a dictionary, not an object
+            response_content = response_data.get("content", "No content provided.")
+            tools_used = response_data.get("tool_calls") or []
+
             # Add to team responses
             team_response = TeamResponse(
-                agent_name=response.agent,
+                agent_name=agent.name,
                 agent_role=state["current_agent"],
-                content=response.content,
-                tools_used=response.tools_used,
-                confidence=getattr(response, 'confidence', 0.7)
+                content=response_content,
+                tools_used=tools_used,
+                confidence=0.85 # Confidence can be refined later
             )
             
             state["team_responses"].append(team_response)

@@ -4,7 +4,7 @@ Orchestrates how agents collaborate to answer queries.
 """
 
 import logging
-from typing import Literal, Optional
+from typing import Literal, Optional, Dict, Any
 
 from langgraph.graph import StateGraph, END
 from langfuse import observe
@@ -212,7 +212,7 @@ class CybersecurityTeamGraph:
             config = {"configurable": {"thread_id": thread_id}}
             result = await self.app.ainvoke(initial_state, config)
             
-            return result["final_answer"] or "I apologize, but I couldn't generate a response."
+            return result.get("final_answer", "I apologize, but I couldn't generate a response.")
             
         except Exception as e:
             logger.error(f"Workflow error: {e}")

@@ -21,6 +21,7 @@ class ConversationManager:
     def __init__(self, workflow):
         """Initialize with workflow."""
         self.workflow = workflow
+        self.store = ConversationStateStore()
         self.history_cache: Dict[str, ConversationHistory] = {}
         self.initialized = False
     
@@ -29,23 +30,30 @@ class ConversationManager:
         Async initialization to set up checkpointer.
         Must be called before using the manager.
         """
-        # Create state store with async checkpointer
-        store = ConversationStateStore()
-        checkpointer = await store.initialize(persist=use_persistent_storage, db_path=db_path)
+        # Initialize the store and get the checkpointer
+        await self.store.initialize(persist=use_persistent_storage, db_path=db_path)
+        checkpointer = await self.store.get_checkpointer()
         
-        # Compile workflow with checkpointer
-        self.workflow.compile_with_checkpointer(checkpointer)
-        
-        self.initialized = True
-        logger.info("Conversation manager initialized with async checkpointer")
-    
+        if checkpointer:
+            # Compile workflow with checkpointer
+            self.workflow.compile_with_checkpointer(checkpointer)
+            self.initialized = True
+            logger.info("Conversation manager initialized with checkpointer.")
+        else:
+            logger.error("Failed to get checkpointer from state store.")
+            self.initialized = False
+
+    async def cleanup(self):
+        """Clean up resources held by the manager."""
+        await self.store.cleanup()
+        logger.info("Conversation manager cleaned up.")
+
     @observe(name="chat")
     async def chat(self, message: str, thread_id: str = "default") -> str:
         """Chat interface."""
         if not self.initialized:
             raise RuntimeError("ConversationManager not initialized. Call await manager.initialize() first.")
         
-        # Rest stays the same...
         if thread_id not in self.history_cache:
             self.history_cache[thread_id] = ConversationHistory()
         
