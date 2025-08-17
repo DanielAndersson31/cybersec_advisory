@@ -4,14 +4,15 @@ Integrated with your existing QualityGateSystem.
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any
 from datetime import datetime
 
 from langfuse import observe
 
-from workflow.state import WorkflowState, TeamResponse
+from workflow.state import WorkflowState
+from workflow.schemas import TeamResponse
 from workflow.router import QueryRouter
-from workflow.quality_gates import QualityGateSystem  # Your existing quality gates
+from workflow.quality_gates import QualityGateSystem
 from config.agent_config import AgentRole
 
 logger = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ class WorkflowNodes:
             enable_quality_gates: Whether to enable quality checking
         """
         self.agents = agents
-        self.router = QueryRouter(agents)
+        self.router = QueryRouter()
         
         # Use your QualityGateSystem
         self.quality_system = QualityGateSystem() if enable_quality_gates else None
@@ -112,38 +113,30 @@ class WorkflowNodes:
             return state
         
         try:
-            # The agent expects a list of messages.
-            # We construct this from the current query and previous responses.
             messages = []
             if state.get("team_responses"):
                 for resp in state["team_responses"]:
-                    # Use the agent's role as a sanitized name for the API
                     sanitized_name = resp.agent_role.value
-                    messages.append({"role": "assistant", "name": sanitized_name, "content": resp.content})
+                    messages.append({"role": "assistant", "name": sanitized_name, "content": resp.response.summary})
             
-            # Add the current user query
             messages.append({"role": "user", "content": state["query"]})
 
-            # Get agent response
             logger.info(f"Consulting {agent.name}...")
-            response_data = await agent.respond(messages=messages)
+            structured_response = await agent.respond(messages=messages)
             
-            # The response from the agent is a dictionary, not an object
-            response_content = response_data.get("content", "No content provided.")
-            tools_used = response_data.get("tool_calls") or []
+            # TODO: Properly extract tool usage information from the new flow
+            tools_used = []
 
-            # Add to team responses
             team_response = TeamResponse(
                 agent_name=agent.name,
                 agent_role=state["current_agent"],
-                content=response_content,
+                response=structured_response,
                 tools_used=tools_used,
-                confidence=0.85 # Confidence can be refined later
             )
             
             state["team_responses"].append(team_response)
             
-            logger.info(f"{agent.name} provided response (confidence: {team_response.confidence:.2f})")
+            logger.info(f"{agent.name} provided response (confidence: {structured_response.confidence_score:.2f})")
             
         except Exception as e:
             logger.error(f"Error consulting {agent.name}: {e}")
@@ -155,48 +148,46 @@ class WorkflowNodes:
     @observe(name="synthesize_responses")
     async def synthesize_responses(self, state: WorkflowState) -> WorkflowState:
         """
-        Synthesize all agent responses into a final answer.
-        
-        Args:
-            state: Current workflow state
-            
-        Returns:
-            Updated state with final answer
+        Synthesize all agent responses into a final, high-quality answer.
         """
         if not state["team_responses"]:
             state["final_answer"] = "I couldn't gather expert analysis for your query."
             return state
         
-        # Single response - use as is
         if len(state["team_responses"]) == 1:
-            state["final_answer"] = state["team_responses"][0].content
+            response = state["team_responses"][0].response
+            final_answer = f"**{state['team_responses'][0].agent_name}'s Analysis:**\n\n"
+            final_answer += f"**Summary:**\n{response.summary}\n\n"
+            if response.recommendations:
+                final_answer += "**Recommendations:**\n"
+                for rec in response.recommendations:
+                    final_answer += f"- {rec}\n"
+            state["final_answer"] = final_answer
         
-        # Multiple responses - create unified answer
         else:
-            if state["needs_consensus"]:
-                # Build a consensus response
-                answer = "Based on our team's analysis:\n\n"
-                
-                for resp in state["team_responses"]:
-                    answer += f"**{resp.agent_name} ({resp.agent_role.value}):**\n"
-                    answer += f"{resp.content}\n\n"
-                
-                # Add summary if responses are long
-                if sum(len(r.content) for r in state["team_responses"]) > 1000:
-                    answer += "**Summary:**\n"
-                    answer += "The team has provided comprehensive analysis from multiple perspectives. "
-                    answer += "Each expert has contributed their specialized knowledge to address your query."
-            else:
-                # Just concatenate nicely
-                answer = "\n\n".join([resp.content for resp in state["team_responses"]])
+            combined_summary = "Based on our team's analysis, here is a consolidated view:\n\n"
+            combined_recommendations = []
             
-            state["final_answer"] = answer
+            for resp in state["team_responses"]:
+                combined_summary += f"**{resp.agent_name}'s Perspective ({resp.agent_role.value}):**\n"
+                combined_summary += f"{resp.response.summary}\n\n"
+                if resp.response.recommendations:
+                    for rec in resp.response.recommendations:
+                        # Avoid duplicate recommendations
+                        if rec not in combined_recommendations:
+                            combined_recommendations.append(rec)
+
+            final_answer = f"{combined_summary}"
+            if combined_recommendations:
+                final_answer += "\n**Consolidated Recommendations:**\n"
+                for rec in combined_recommendations:
+                    final_answer += f"- {rec}\n"
+            
+            state["final_answer"] = final_answer
         
-        # Add final answer to messages
         from langchain_core.messages import AIMessage
         state["messages"].append(AIMessage(content=state["final_answer"]))
         
-        # Set completion time
         state["completed_at"] = datetime.utcnow()
         
         logger.info(f"Synthesized response from {len(state['team_responses'])} agents")
@@ -222,7 +213,7 @@ class WorkflowNodes:
         # Determine agent type for quality checking
         # Use the primary agent or the one with highest confidence
         if state["team_responses"]:
-            primary_response = max(state["team_responses"], key=lambda r: r.confidence)
+            primary_response = max(state["team_responses"], key=lambda r: r.response.confidence_score)
             agent_type = primary_response.agent_role.value
         else:
             agent_type = "incident_response"  # Default

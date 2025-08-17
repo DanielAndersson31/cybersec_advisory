@@ -4,135 +4,98 @@ Simple keyword-based routing with expertise matching.
 """
 
 import logging
-from typing import List, Dict, Any
+from typing import List
+import instructor
+from openai import AsyncOpenAI
+from pydantic import ValidationError
 
-from config.agent_config import AgentRole, EXPERTISE_DOMAINS, INTERACTION_RULES
+from config.agent_config import AgentRole, INTERACTION_RULES
+from config.settings import settings
+from .schemas import RoutingDecision
 
 logger = logging.getLogger(__name__)
 
 
 class QueryRouter:
     """
-    Routes queries to appropriate cybersecurity agents based on content.
+    Routes queries to appropriate cybersecurity agents using a semantic, LLM-based approach.
     """
     
-    def __init__(self, agents: Dict[AgentRole, Any]):
-        """
-        Initialize router with available agents.
-        
-        Args:
-            agents: Dictionary of available agents
-        """
-        self.agents = agents
-        self.expertise_domains = EXPERTISE_DOMAINS
-    
+    def __init__(self):
+        """Initialize the router with an instructor-patched LLM client."""
+        self.llm = instructor.patch(
+            AsyncOpenAI(api_key=settings.get_secret("openai_api_key"))
+        )
+        self.agent_expertise = {
+            AgentRole.INCIDENT_RESPONSE: "Handles active security incidents, breaches, malware infections, and suspicious activities. Focuses on containment, eradication, and recovery.",
+            AgentRole.PREVENTION: "Focuses on proactive defense, secure architecture, vulnerability management, and risk mitigation. Designs and recommends security controls.",
+            AgentRole.THREAT_INTEL: "Analyzes threat actors, their tactics (TTPs), and campaigns. Provides deep, contextualized intelligence on adversary motives and likely future actions.",
+            AgentRole.COMPLIANCE: "Specializes in regulatory frameworks (GDPR, HIPAA, PCI-DSS), policies, and audits. Provides guidance on governance and compliance obligations."
+        }
+
     async def determine_relevant_agents(self, query: str) -> List[AgentRole]:
         """
-        Determine which agents should respond to a query.
-        
-        Args:
-            query: User query
-            
-        Returns:
-            List of agent roles that should respond
+        Determines which agents should respond to a query using an LLM for semantic routing.
         """
-        query_lower = query.lower()
-        relevant_agents = []
+        prompt = self._build_routing_prompt(query)
         
-        # Check each agent's expertise against the query
-        for role in AgentRole:
-            if role == AgentRole.COORDINATOR:
-                continue  # Coordinator doesn't directly respond
+        try:
+            decision = await self.llm.chat.completions.create(
+                model=settings.routing_model_name,
+                messages=[{"role": "user", "content": prompt}],
+                response_model=RoutingDecision,
+                max_retries=2,
+            )
+            logger.info(f"Routing decision for query '{query[:50]}...': {decision.reasoning}")
             
-            if self._is_agent_relevant(role, query_lower):
-                relevant_agents.append(role)
+            # Filter out any roles that are not actual agents
+            valid_agents = [role for role in decision.relevant_agents if role in self.agent_expertise]
+            return valid_agents
         
-        # Log routing decision
-        if relevant_agents:
-            logger.info(f"Query matched {len(relevant_agents)} agents: {[a.value for a in relevant_agents]}")
-        else:
-            logger.info("No specific expertise match found")
+        except (ValidationError, Exception) as e:
+            logger.error(f"LLM-based routing failed: {e}")
+            # Fallback to a safe default if routing fails
+            return [AgentRole.INCIDENT_RESPONSE]
+
+    def _build_routing_prompt(self, query: str) -> str:
+        """Constructs the prompt for the LLM router."""
+        expertise_descriptions = "\\n".join(
+            f"- **{role.value}**: {desc}" for role, desc in self.agent_expertise.items()
+        )
         
-        return relevant_agents
-    
-    def _is_agent_relevant(self, role: AgentRole, query_lower: str) -> bool:
-        """
-        Check if an agent's expertise matches the query.
-        
-        Args:
-            role: Agent role to check
-            query_lower: Lowercase query string
-            
-        Returns:
-            True if agent should respond
-        """
-        # Check expertise domains
-        domains = self.expertise_domains.get(role, [])
-        for domain in domains:
-            # Convert underscore to space for matching
-            if domain.replace("_", " ") in query_lower:
-                return True
-        
-        # Role-specific keyword matching
-        if role == AgentRole.INCIDENT_RESPONSE:
-            keywords = [
-                "incident", "breach", "attack", "compromised", "infected",
-                "alert", "suspicious", "malware", "ransomware", "intrusion",
-                "unauthorized access", "data leak", "security event"
-            ]
-            if any(keyword in query_lower for keyword in keywords):
-                return True
-        
-        elif role == AgentRole.PREVENTION:
-            keywords = [
-                "prevent", "secure", "harden", "protect", "vulnerability",
-                "patch", "configuration", "best practice", "security control",
-                "risk mitigation", "security architecture", "defense"
-            ]
-            if any(keyword in query_lower for keyword in keywords):
-                return True
-        
-        elif role == AgentRole.THREAT_INTEL:
-            keywords = [
-                "threat", "actor", "campaign", "apt", "intelligence",
-                "ioc", "indicator", "attribution", "ttps", "adversary",
-                "threat landscape", "emerging threat", "zero day"
-            ]
-            if any(keyword in query_lower for keyword in keywords):
-                return True
-        
-        elif role == AgentRole.COMPLIANCE:
-            keywords = [
-                "compliance", "gdpr", "hipaa", "pci", "sox", "iso",
-                "audit", "regulation", "policy", "standard", "framework",
-                "certification", "requirement", "governance"
-            ]
-            if any(keyword in query_lower for keyword in keywords):
-                return True
-        
-        return False
-    
+        return f"""
+You are an expert request router for a team of cybersecurity specialist agents. Your task is to determine which agent(s) are best suited to handle a given user query based on their described expertise.
+
+**Agent Expertise:**
+{expertise_descriptions}
+
+**User Query:**
+"{query}"
+
+---
+**Instructions:**
+1.  Analyze the user's query to understand its intent.
+2.  Based on the agent expertise, identify the most appropriate agent(s) to handle the query.
+3.  You can select one or more agents. If the query is complex and requires multiple perspectives, select all relevant agents.
+4.  Provide a brief reasoning for your choice.
+5.  Return your decision in the required structured format. If no specific expertise matches, you may return an empty list.
+"""
+
     def get_primary_agent(self, agents: List[AgentRole]) -> AgentRole:
         """
-        Determine the primary agent from a list of relevant agents.
+        Determines the primary agent from a list of relevant agents.
         Uses the speaking order from config.
-        
-        Args:
-            agents: List of relevant agents
-            
-        Returns:
-            Primary agent role
         """
         if not agents:
-            return AgentRole.INCIDENT_RESPONSE  # Default
+            # If the LLM router returns no relevant agents, default to a generalist.
+            # Incident Response is often a safe default for unknown security queries.
+            logger.warning("No relevant agents identified by router. Defaulting to Incident Response.")
+            return AgentRole.INCIDENT_RESPONSE
         
-        # Use speaking order from config
         speaking_order = INTERACTION_RULES.get("speaking_order", [])
         
-        # Find first agent in speaking order
         for role in speaking_order:
             if role in agents:
                 return role
         
-        # Fallback to first agent
         return agents[0]

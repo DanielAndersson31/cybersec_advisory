@@ -4,12 +4,14 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
-
+import instructor
 from openai import AsyncOpenAI
 from langfuse import observe
+from pydantic import ValidationError
 
 from config.agent_config import AgentRole, get_agent_config, get_agent_tools
 from cybersec_mcp.cybersec_client import CybersecurityMCPClient
+from workflow.schemas import StructuredAgentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,7 @@ class BaseSecurityAgent(ABC):
 
     This class provides a robust structure for agents that combine domain
     expertise (via system prompts) with real-time tool usage. It uses an
-    LLM-driven approach for tool selection, guided by a strict permission model.
+    LLM-driven approach for tool selection and structured response generation.
     """
 
     def __init__(
@@ -39,17 +41,18 @@ class BaseSecurityAgent(ABC):
         """
         self.role = role
         self.config = get_agent_config(role)
-        self.llm = llm_client
+        
+        # Patch the LLM client with instructor
+        self.llm = instructor.patch(llm_client)
         self.mcp_client = mcp_client
 
         # Core properties loaded from the configuration file.
         self.name: str = self.config["name"]
         self.model: str = self.config["model"]
         self.temperature: float = self.config.get("temperature", 0.1)
-        self.max_tokens: int = self.config.get("max_tokens", 2000)
+        self.max_tokens: int = self.config.get("max_tokens", 4000) # Increased for structured output
 
         # Gets the full JSON schema definitions for only the tools this agent is permitted to use.
-        # This filtered list is passed to the LLM, enforcing the permission layer.
         self.tools: List[Dict[str, Any]] = get_agent_tools(self.role)
 
         logger.info(
@@ -65,23 +68,15 @@ class BaseSecurityAgent(ABC):
         pass
 
     @observe(name="agent_respond")
-    async def respond(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def respond(self, messages: List[Dict[str, Any]]) -> StructuredAgentResponse:
         """
-        Generates a response by orchestrating LLM calls and tool execution.
-
-        This method implements a two-step, LLM-driven tool-calling loop.
-
-        Args:
-            messages: The current list of messages from the conversation state.
-
-        Returns:
-            The final response message object from the LLM.
+        Generates a structured response by orchestrating LLM calls and tool execution.
         """
         system_prompt = self.get_system_prompt()
         messages_with_system = [{"role": "system", "content": system_prompt}, *messages]
 
         try:
-            # === STEP 1: First LLM call to decide if tools are needed ===
+            # Step 1: First LLM call to decide if tools are needed
             response = await self.llm.chat.completions.create(
                 model=self.model,
                 messages=messages_with_system,
@@ -92,9 +87,9 @@ class BaseSecurityAgent(ABC):
             )
             response_message = response.choices[0].message
 
-            # === STEP 2: Execute tools if the LLM requested them ===
+            # Step 2: Execute tools if the LLM requested them
             if response_message.tool_calls:
-                messages_with_system.append(response_message)  # Add model's request to history
+                messages_with_system.append(response_message)
 
                 for tool_call in response_message.tool_calls:
                     tool_name = tool_call.function.name
@@ -102,49 +97,52 @@ class BaseSecurityAgent(ABC):
                     
                     logger.info(f"Agent {self.name} calling tool '{tool_name}' with args: {tool_args}")
                     
-                    # Execute the tool and get the result
                     tool_output = await self._execute_tool(tool_name, tool_args)
                     
-                    # Add the tool's result to the conversation history
-                    messages_with_system.append(
-                        {
-                            "tool_call_id": tool_call.id,
-                            "role": "tool",
-                            "name": tool_name,
-                            "content": str(tool_output),
-                        }
-                    )
-                
-                # === STEP 3: Second LLM call with tool results for final synthesis ===
-                final_response = await self.llm.chat.completions.create(
-                    model=self.model,
-                    messages=messages_with_system,
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                )
-                return final_response.choices[0].message.model_dump()
+                    messages_with_system.append({
+                        "tool_call_id": tool_call.id,
+                        "role": "tool",
+                        "name": tool_name,
+                        "content": str(tool_output),
+                    })
 
-            # If no tools were called, return the first response
-            return response_message.model_dump()
+            # Step 3: Final LLM call to generate a structured response
+            final_response = await self.llm.chat.completions.create(
+                model=self.model,
+                messages=messages_with_system,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                response_model=StructuredAgentResponse,
+                max_retries=2,
+            )
+            return final_response
 
+        except ValidationError as e:
+            logger.error(f"Agent {self.name} failed validation: {e}", exc_info=True)
+            return StructuredAgentResponse(
+                summary=f"My response failed validation. Please review the error: {e}",
+                recommendations=[],
+                confidence_score=0.1,
+                handoff_request=None
+            )
         except Exception as e:
             logger.error(f"Agent {self.name} encountered an error: {e}", exc_info=True)
-            return {"role": "assistant", "content": f"Error in {self.name}: {e}"}
+            return StructuredAgentResponse(
+                summary=f"An unexpected error occurred: {e}",
+                recommendations=[],
+                confidence_score=0.0,
+                handoff_request=None
+            )
 
     async def _execute_tool(self, tool_name: str, kwargs: Dict[str, Any]) -> Any:
         """
         Executes a tool by mapping its name to the corresponding MCP client method.
-
-        This acts as a secure and maintainable router, preventing the LLM from
-        calling arbitrary code.
         """
-        # Mapping from the tool name in config to the actual client method.
         tool_method_map = {
             "ioc_analysis_tool": self.mcp_client.analyze_ioc,
             "vulnerability_search_tool": self.mcp_client.search_vulnerabilities,
             "web_search_tool": self.mcp_client.search_web,
             "knowledge_search_tool": self.mcp_client.search_knowledge,
-            "breach_monitoring_tool": self.mcp_client.monitor_breaches,
             "attack_surface_analyzer_tool": self.mcp_client.analyze_attack_surface,
             "threat_feeds_tool": self.mcp_client.get_threat_feeds,
             "compliance_guidance_tool": self.mcp_client.get_compliance_guidance,
@@ -153,11 +151,9 @@ class BaseSecurityAgent(ABC):
         if tool_name not in tool_method_map:
             return f"Error: Tool '{tool_name}' is not a valid or recognized tool."
 
-        # Get the correct client method from the map
         tool_method = tool_method_map[tool_name]
 
         try:
-            # Call the method with the arguments provided by the LLM
             return await tool_method(**kwargs)
         except Exception as e:
             logger.error(f"Error executing tool '{tool_name}': {e}", exc_info=True)

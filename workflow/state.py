@@ -3,22 +3,13 @@ Workflow state definition for the cybersecurity team.
 Uses Pydantic for consistency and type safety.
 """
 
-from typing import List, Dict, Any, Optional, Literal
+from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import Field
 from langgraph.graph import MessagesState
 
 from config.agent_config import AgentRole
-
-
-class TeamResponse(BaseModel):
-    """Response from a team member."""
-    agent_name: str
-    agent_role: AgentRole
-    content: str
-    tools_used: List[Dict[str, Any]] = Field(default_factory=list)
-    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+from .schemas import TeamResponse
 
 
 class WorkflowState(MessagesState):
