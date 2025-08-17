@@ -2,8 +2,8 @@
 Web search tool using Tavily API for cybersecurity queries.
 """
 
-from typing import Dict, Any, List, Optional
-from pydantic import BaseModel
+from typing import Dict, Any, List, Optional, Literal
+from pydantic import BaseModel, Field, ValidationError
 from tavily import AsyncTavilyClient
 import logging
 from config.settings import settings
@@ -17,29 +17,43 @@ logger = logging.getLogger(__name__)
 
 class QueryIntent(BaseModel):
     """The classified intent of a user's search query."""
-    is_cybersecurity: bool
-    confidence: float
-    reasoning: str
-    suggested_enhancement: Optional[str] = None
+    is_cybersecurity: bool = Field(description="Whether the query is cybersecurity-related")
+    confidence: float = Field(
+        ge=0.0, le=1.0, 
+        description="Confidence score between 0 and 1"
+    )
+    reasoning: str = Field(
+        max_length=500,
+        description="Brief explanation of the classification"
+    )
+    category: Optional[Literal[
+        "threat_intelligence", "vulnerability", "compliance", 
+        "incident_response", "security_tools", "general_security", "non_security"
+    ]] = Field(description="Specific cybersecurity category if applicable")
+    suggested_enhancement: Optional[str] = Field(
+        max_length=200,
+        description="Enhanced query for better search results"
+    )
 
 
 class WebSearchResult(BaseModel):
     """A single web search result."""
-    title: str
-    url: str
-    content: str
-    score: float
-    published_date: Optional[str] = None
+    title: str = Field(description="Title of the search result")
+    url: str = Field(description="URL of the search result")
+    content: str = Field(description="Content snippet from the search result")
+    score: float = Field(ge=0.0, description="Relevance score")
+    published_date: Optional[str] = Field(description="Publication date if available")
+
 
 class WebSearchResponse(BaseModel):
     """The structured response for a web search query."""
-    status: str = "success"
-    query: str
-    enhanced_query: str
-    intent_reasoning: Optional[str] = None  # Add reasoning for transparency
-    results: List[WebSearchResult]
-    total_results: int
-    error: Optional[str] = None
+    status: str = Field(default="success", description="Status of the search operation")
+    query: str = Field(description="Original search query")
+    enhanced_query: str = Field(description="Enhanced or modified query used for search")
+    intent_reasoning: Optional[str] = Field(description="Reasoning for query classification")
+    results: List[WebSearchResult] = Field(description="List of search results")
+    total_results: int = Field(ge=0, description="Total number of results returned")
+    error: Optional[str] = Field(description="Error message if search failed")
 
 
 class WebSearchTool:
@@ -85,14 +99,48 @@ class WebSearchTool:
         This method is cached to improve performance for repeated queries.
         """
         try:
-            # This prompt guides the LLM to return structured JSON.
+            # Enhanced prompt for better classification
             return await self.instructor.chat.completions.create(
                 model=settings.search_model_name,
                 response_model=QueryIntent,
+                max_retries=2,  # Add retry logic for reliability
                 messages=[
-                    {"role": "system", "content": "You are a world-class cybersecurity expert. Your task is to classify search queries."},
-                    {"role": "user", "content": f"Analyze this query and determine if it's related to cybersecurity, IT security, or information security.\nQuery: '{query}'"}
+                    {
+                        "role": "system", 
+                        "content": """You are a cybersecurity expert who classifies search queries.
+                        
+                        Analyze if the query relates to:
+                        - Cybersecurity threats, vulnerabilities, malware
+                        - IT security, information security, data protection
+                        - Security tools, frameworks, compliance (SOC2, ISO27001, etc.)
+                        - Incident response, forensics, risk management
+                        - Network security, endpoint security, cloud security
+                        
+                        Provide a confidence score and suggest query enhancements for better search results.
+                        Be conservative - only mark as cybersecurity if clearly related."""
+                    },
+                    {
+                        "role": "user", 
+                        "content": f"""Classify this search query:
+                        
+                        Query: "{query}"
+                        
+                        Consider:
+                        1. Is this clearly cybersecurity-related?
+                        2. What specific category does it fall into?
+                        3. How could the query be enhanced for better search results?
+                        4. What's your confidence level (0.0 to 1.0)?"""
+                    }
                 ]
+            )
+        except ValidationError as e:
+            logger.error(f"Validation error in intent classification: {e}")
+            # Fallback with proper validation
+            return QueryIntent(
+                is_cybersecurity=False, 
+                confidence=0.0, 
+                reasoning=f"Validation failed: {str(e)}",
+                category="non_security"
             )
         except Exception as e:
             logger.error(f"Intent classification LLM error: {e}")
@@ -100,7 +148,8 @@ class WebSearchTool:
             return QueryIntent(
                 is_cybersecurity=False, 
                 confidence=0.0, 
-                reasoning=f"LLM classification failed: {e}"
+                reasoning=f"LLM classification failed: {str(e)}",
+                category="non_security"
             )
 
     async def search(
@@ -127,27 +176,27 @@ class WebSearchTool:
         # Validate and limit results
         max_results = min(max_results, 10)
         
-        # Classify intent to determine if enhancement is needed.
-        intent = await self.classify_query_intent(query)
-        logger.info(f"Query intent classified: {intent.model_dump_json(indent=2)}")
-
-        enhanced_query = query
-        # Only enhance if the LLM is confident it's a cybersecurity query.
-        if intent.is_cybersecurity and intent.confidence >= settings.search_confidence_threshold:
-            enhanced_query = intent.suggested_enhancement or self._enhance_query(query, search_type)
-        
-        # For cybersecurity searches, use trusted domains if none are specified.
-        # For general queries, search the whole web unless specific domains are provided.
-        search_domains = include_domains
-        if (
-            not search_domains and 
-            search_type == "general" and 
-            intent.is_cybersecurity and 
-            intent.confidence >= settings.search_confidence_threshold
-        ):
-            search_domains = self.trusted_domains
-        
         try:
+            # Classify intent to determine if enhancement is needed.
+            intent = await self.classify_query_intent(query)
+            logger.info(f"Query intent classified: {intent.model_dump_json(indent=2)}")
+
+            enhanced_query = query
+            # Only enhance if the LLM is confident it's a cybersecurity query.
+            if intent.is_cybersecurity and intent.confidence >= settings.search_confidence_threshold:
+                enhanced_query = intent.suggested_enhancement or self._enhance_query(query, search_type)
+            
+            # For cybersecurity searches, use trusted domains if none are specified.
+            # For general queries, search the whole web unless specific domains are provided.
+            search_domains = include_domains
+            if (
+                not search_domains and 
+                search_type == "general" and 
+                intent.is_cybersecurity and 
+                intent.confidence >= settings.search_confidence_threshold
+            ):
+                search_domains = self.trusted_domains
+            
             # Call Tavily API with the potentially enhanced query.
             logger.info(f"Searching for: '{enhanced_query}' within domains: {search_domains or 'any'}")
             
@@ -159,18 +208,23 @@ class WebSearchTool:
                 time_range=time_range
             )
             
-            # Format results
+            # Format results with validation
             formatted_results = []
             for result in results.get("results", []):
-                formatted_results.append(WebSearchResult(
-                    title=result.get("title", ""),
-                    url=result.get("url", ""),
-                    content=result.get("content", ""),
-                    score=result.get("score", 0.0),
-                    published_date=result.get("published_date")
-                ))
+                try:
+                    formatted_result = WebSearchResult(
+                        title=result.get("title", ""),
+                        url=result.get("url", ""),
+                        content=result.get("content", ""),
+                        score=max(0.0, float(result.get("score", 0.0))),  # Ensure non-negative
+                        published_date=result.get("published_date")
+                    )
+                    formatted_results.append(formatted_result)
+                except ValidationError as e:
+                    logger.warning(f"Skipping invalid search result: {e}")
+                    continue
             
-            return WebSearchResponse(
+            response = WebSearchResponse(
                 query=query,
                 enhanced_query=enhanced_query,
                 intent_reasoning=intent.reasoning,
@@ -178,12 +232,28 @@ class WebSearchTool:
                 total_results=len(formatted_results)
             )
             
+            # Validate response quality
+            if len(formatted_results) == 0 and intent.is_cybersecurity:
+                logger.warning(f"No results found for cybersecurity query: {query}")
+            
+            return response
+            
+        except ValidationError as e:
+            logger.error(f"Validation error in search response: {e}")
+            return WebSearchResponse(
+                status="error",
+                query=query,
+                enhanced_query=query,
+                results=[],
+                total_results=0,
+                error=f"Validation error: {str(e)}"
+            )
         except Exception as e:
             logger.error(f"Search error: {str(e)}")
             return WebSearchResponse(
                 status="error",
                 query=query,
-                enhanced_query=query, # Use original query on error
+                enhanced_query=query,
                 results=[],
                 total_results=0,
                 error=str(e)

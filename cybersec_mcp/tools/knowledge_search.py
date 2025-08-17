@@ -59,7 +59,7 @@ class KnowledgeSearchTool:
                 logger.info(f"Searching knowledge base in specified domain '{domain}' for: '{query}'")
             else:
                 # If no domain is specified, search all available collections
-                domains_to_search = knowledge_retriever.store_manager.get_all_collection_names()
+                domains_to_search = await knowledge_retriever.store_manager.get_all_collection_names()
                 logger.info(f"Searching across all domains for: '{query}'")
 
             if not domains_to_search:

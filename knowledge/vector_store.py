@@ -51,10 +51,10 @@ class VectorStoreManager:
         
         logger.info(f"VectorStoreManager initialized with {model_name} (dim: {self.embedding_dim})")
 
-    def get_all_collection_names(self) -> List[str]:
+    async def get_all_collection_names(self) -> List[str]:
         """Retrieve a list of all collection names from Qdrant."""
         try:
-            collections_response = self.client.get_collections()
+            collections_response = await self.client.get_collections()
             return [col.name for col in collections_response.collections]
         except Exception as e:
             logger.exception(f"Failed to retrieve collection names: {e}")
