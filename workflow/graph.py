@@ -4,7 +4,7 @@ Orchestrates how agents collaborate to answer queries.
 """
 
 import logging
-from typing import Literal, Optional, Dict, Any
+from typing import Literal, Optional, List
 
 from langgraph.graph import StateGraph, END
 from langfuse import observe
@@ -15,6 +15,7 @@ from workflow.fallbacks import ErrorHandler
 from agents.factory import AgentFactory
 from cybersec_mcp.cybersec_client import CybersecurityMCPClient
 from openai import AsyncOpenAI
+from config.agent_config import AgentRole
 
 
 logger = logging.getLogger(__name__)
@@ -39,10 +40,15 @@ class CybersecurityTeamGraph:
         # Create all agents using the factory
         self.factory = AgentFactory(llm_client=llm_client, mcp_client=mcp_client)
         self.agents = self.factory.create_all_agents()
+        self.coordinator = self.factory.create_agent(AgentRole.COORDINATOR)
         
         # Initialize workflow components
         # Nodes now handle quality gates internally
-        self.nodes = WorkflowNodes(self.agents, enable_quality_gates=enable_quality_checks)
+        self.nodes = WorkflowNodes(
+            agents=self.agents,
+            coordinator=self.coordinator,
+            enable_quality_gates=enable_quality_checks
+        )
         self.error_handler = ErrorHandler()
         self.enable_quality_checks = enable_quality_checks
         
@@ -83,8 +89,8 @@ class CybersecurityTeamGraph:
         # Add nodes
         workflow.add_node("analyze", self.nodes.analyze_query)
         workflow.add_node("route", self.nodes.route_to_agents)
-        workflow.add_node("consult", self.nodes.consult_agent)
-        workflow.add_node("synthesize", self.nodes.synthesize_responses)
+        workflow.add_node("consult_agent", self.nodes.consult_agent)
+        workflow.add_node("coordinate", self.nodes.coordinate_responses)
         
         # Add quality check if enabled
         if self.enable_quality_checks:
@@ -94,21 +100,22 @@ class CybersecurityTeamGraph:
         # Define the flow
         workflow.set_entry_point("analyze")
         workflow.add_edge("analyze", "route")
-        workflow.add_edge("route", "consult")
         
-        # After consulting, check if more agents needed
+        # This is the dynamic part: consult agents in parallel
         workflow.add_conditional_edges(
-            "consult",
-            self._should_continue,
+            "route",
+            self._should_consult,
             {
-                "continue": "consult",    # More agents to consult
-                "synthesize": "synthesize" # All done, synthesize
+                "consult": "consult_agent",
+                "coordinate": "coordinate"
             }
         )
         
+        workflow.add_edge("consult_agent", "coordinate")
+        
         # Quality check flow if enabled
         if self.enable_quality_checks:
-            workflow.add_edge("synthesize", "quality")
+            workflow.add_edge("coordinate", "quality")
             
             # After quality check, check RAG if tools were used
             workflow.add_conditional_edges(
@@ -122,33 +129,36 @@ class CybersecurityTeamGraph:
             
             workflow.add_edge("rag_quality", END)
         else:
-            workflow.add_edge("synthesize", END)
+            workflow.add_edge("coordinate", END)
         
         return workflow
-    
-    def _should_continue(self, state: WorkflowState) -> Literal["continue", "synthesize"]:
-        """
-        Decide if more agents should be consulted.
-        
-        Args:
-            state: Current workflow state
-            
-        Returns:
-            Next step in workflow
-        """
-        # Check if we have more agents to consult
-        remaining_agents = [
-            agent for agent in state["agents_to_consult"]
-            if not any(r.agent_role == agent for r in state["team_responses"])
-        ]
-        
-        if remaining_agents:
-            # Set next agent
-            state["current_agent"] = remaining_agents[0]
-            return "continue"
-        
-        return "synthesize"
-    
+
+    def _prepare_consultation_inputs(self, state: WorkflowState) -> dict:
+        """Prepares the inputs for the parallel consultation map."""
+        inputs = []
+        for agent_role in state["agents_to_consult"]:
+            inputs.append({
+                "agent_role": agent_role,
+                "messages": state["messages"],
+            })
+        return {"inputs": inputs}
+
+    def _aggregate_consultation_outputs(self, state: WorkflowState, outputs: List[dict]) -> WorkflowState:
+        """Aggregates the outputs from the parallel consultation map."""
+        # The outputs are lists of dictionaries, we need to flatten them
+        all_responses = [item for sublist in outputs for item in sublist.get("team_responses", [])]
+        state["team_responses"].extend(all_responses)
+        return state
+
+    def _should_consult(self, state: WorkflowState) -> Literal["consult", "coordinate"]:
+        """Decide whether to consult agents or go directly to synthesis."""
+        if state["agents_to_consult"]:
+            logger.info(f"Proceeding to consult {len(state['agents_to_consult'])} agents in parallel.")
+            return "consult"
+        else:
+            logger.info("No agents to consult, proceeding directly to synthesis.")
+            return "coordinate"
+
     def _should_check_rag(self, state: WorkflowState) -> Literal["check_rag", "finish"]:
         """
         Decide if RAG quality should be checked.

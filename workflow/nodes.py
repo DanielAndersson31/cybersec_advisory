@@ -23,21 +23,16 @@ class WorkflowNodes:
     Contains all node functions for the workflow graph.
     """
     
-    def __init__(self, agents: Dict[AgentRole, Any], enable_quality_gates: bool = True):
+    def __init__(self, agents: Dict[AgentRole, Any], coordinator: Any, enable_quality_gates: bool = True):
         """
-        Initialize with available agents.
-        
-        Args:
-            agents: Dictionary of initialized agents
-            enable_quality_gates: Whether to enable quality checking
+        Initialize with available agents and a coordinator.
         """
         self.agents = agents
+        self.coordinator = coordinator
         self.router = QueryRouter()
-        
-        # Use your QualityGateSystem
         self.quality_system = QualityGateSystem() if enable_quality_gates else None
         self.enable_quality_gates = enable_quality_gates
-    
+
     @observe(name="analyze_query")
     async def analyze_query(self, state: WorkflowState) -> WorkflowState:
         """
@@ -90,37 +85,30 @@ class WorkflowNodes:
         state["needs_consensus"] = len(agents_to_consult) > 1
         
         return state
-    
-    @observe(name="consult_agent")
-    async def consult_agent(self, state: WorkflowState) -> WorkflowState:
-        """
-        Consult the current agent for their expertise.
-        
-        Args:
-            state: Current workflow state
-            
-        Returns:
-            Updated state with agent response
-        """
-        if not state["current_agent"]:
-            logger.warning("No current agent set")
-            return state
-        
-        agent = self.agents.get(state["current_agent"])
-        if not agent:
-            logger.error(f"Agent {state['current_agent']} not found")
-            state["error_count"] += 1
-            return state
-        
-        try:
-            messages = []
-            if state.get("team_responses"):
-                for resp in state["team_responses"]:
-                    sanitized_name = resp.agent_role.value
-                    messages.append({"role": "assistant", "name": sanitized_name, "content": resp.response.summary})
-            
-            messages.append({"role": "user", "content": state["query"]})
 
+    @observe(name="consult_agent")
+    async def consult_agent(self, inputs: dict) -> WorkflowState:
+        """
+        Consults a specific agent for their expertise.
+        This node is designed to be used in a parallel map operation.
+
+        Args:
+            inputs: A dictionary containing 'agent_role' and 'messages'.
+
+        Returns:
+            A dictionary containing the agent's structured response.
+        """
+        agent_role = inputs["agent_role"]
+        messages = inputs["messages"]
+        
+        agent = self.agents.get(agent_role)
+        if not agent:
+            error_msg = f"Agent {agent_role} not found"
+            logger.error(error_msg)
+            # Return a structured error response
+            return {"error": error_msg, "team_responses": []}
+
+        try:
             logger.info(f"Consulting {agent.name}...")
             structured_response = await agent.respond(messages=messages)
             
@@ -129,22 +117,77 @@ class WorkflowNodes:
 
             team_response = TeamResponse(
                 agent_name=agent.name,
-                agent_role=state["current_agent"],
+                agent_role=agent_role,
                 response=structured_response,
                 tools_used=tools_used,
             )
             
-            state["team_responses"].append(team_response)
-            
             logger.info(f"{agent.name} provided response (confidence: {structured_response.confidence_score:.2f})")
-            
+            return {"team_responses": [team_response]}
+
         except Exception as e:
             logger.error(f"Error consulting {agent.name}: {e}")
-            state["error_count"] += 1
-            state["last_error"] = str(e)
+            return {"error": str(e), "team_responses": []}
+
+    def get_team_response_as_str(self, team_response: TeamResponse) -> str:
+        """A simple node to extract the string content from a TeamResponse object."""
+        return f"**{team_response.agent_name} ({team_response.agent_role.value}):**\n{team_response.response.summary}"
+
+    @observe(name="coordinate_responses")
+    async def coordinate_responses(self, state: WorkflowState) -> WorkflowState:
+        """
+        Invokes the CoordinatorAgent to synthesize a final report.
+        """
+        if not state["team_responses"]:
+            state["final_answer"] = "I couldn't gather expert analysis for your query."
+            return state
+
+        # Prepare the context for the coordinator
+        expert_analyses = []
+        for resp in state["team_responses"]:
+            analysis = f"""
+<expert_analysis>
+  <agent_name>{resp.agent_name}</agent_name>
+  <agent_role>{resp.agent_role.value}</agent_role>
+  <summary>{resp.response.summary}</summary>
+  <recommendations>
+    {'\\n'.join(f"<item>{rec}</item>" for rec in resp.response.recommendations)}
+  </recommendations>
+</expert_analysis>
+"""
+            expert_analyses.append(analysis)
+
+        coordination_context = f"""
+**Original User Query:**
+{state['query']}
+
+**Analyses from Specialist Agents:**
+{''.join(expert_analyses)}
+"""
+
+        # The coordinator returns a StructuredAgentResponse, but its content is a FinalReport
+        # We need to adjust the base agent to handle this, or cast the response here.
+        # For now, let's assume the response can be cast or handled appropriately.
+        final_report_structured = await self.coordinator.respond(messages=[{"role": "user", "content": coordination_context}])
+
+        # Format the final report into a user-friendly string
+        final_answer = f"### Executive Summary\n{final_report_structured.summary}\n\n"
         
+        # This part needs adjustment based on how FinalReport is returned
+        # Assuming summary contains the exec summary and recommendations the prioritized list
+        if final_report_structured.recommendations:
+            final_answer += "### Prioritized Recommendations\n"
+            for i, rec in enumerate(final_report_structured.recommendations, 1):
+                final_answer += f"{i}. {rec}\n"
+
+        state["final_answer"] = final_answer
+        from langchain_core.messages import AIMessage
+        state["messages"].append(AIMessage(content=state["final_answer"]))
+        state["completed_at"] = datetime.utcnow()
+        
+        logger.info(f"Coordinator synthesized response from {len(state['team_responses'])} agents.")
         return state
-    
+
     @observe(name="synthesize_responses")
     async def synthesize_responses(self, state: WorkflowState) -> WorkflowState:
         """

@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from config.settings import settings
 from config.langfuse_settings import langfuse_config
-from .schemas import QualityGateResult, RAGRelevanceResult, RAGGroundednessResult
+from workflow.schemas import QualityGateResult, RAGRelevanceResult, RAGGroundednessResult
 
 
 class QualityGateSystem:

@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from config.agent_config import AgentRole, INTERACTION_RULES
 from config.settings import settings
-from .schemas import RoutingDecision
+from workflow.schemas import RoutingDecision
 
 logger = logging.getLogger(__name__)
 

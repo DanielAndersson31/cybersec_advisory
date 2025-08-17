@@ -202,34 +202,6 @@ QUALITY_THRESHOLDS = {
 }
 
 
-EXPERTISE_DOMAINS = {
-    AgentRole.INCIDENT_RESPONSE: [
-        "incident_handling",
-        "forensics",
-        "malware_analysis",
-        "crisis_management"
-    ],
-    AgentRole.PREVENTION: [
-        "security_architecture",
-        "vulnerability_management",
-        "secure_design",
-        "risk_mitigation"
-    ],
-    AgentRole.THREAT_INTEL: [
-        "threat_analysis",
-        "attribution",
-        "threat_hunting",
-        "intelligence_gathering"
-    ],
-    AgentRole.COMPLIANCE: [
-        "regulatory_compliance",
-        "audit",
-        "governance",
-        "policy_management"
-    ]
-}
-
-
 def get_agent_config(role: AgentRole) -> Dict[str, Any]:
     """Get configuration for a specific agent role"""
     if role not in AGENT_CONFIGS:
@@ -294,7 +266,6 @@ __all__ = [
     "INTERACTION_RULES",
     "RESPONSE_TIME_LIMITS",
     "QUALITY_THRESHOLDS",
-    "EXPERTISE_DOMAINS",
     "CONVERSATION_CONFIG",
     "get_agent_config",
     "get_agent_tools",

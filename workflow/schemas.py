@@ -69,3 +69,18 @@ class RoutingDecision(BaseModel):
         max_length=500,
         description="A brief explanation for the routing decision."
     )
+
+class FinalReport(BaseModel):
+    """A final, synthesized report from the Coordinator agent."""
+    executive_summary: str = Field(
+        ...,
+        description="A high-level summary of the situation, suitable for leadership."
+    )
+    prioritized_recommendations: List[str] = Field(
+        ...,
+        description="A prioritized list of actionable recommendations, ordered from most to least critical."
+    )
+    conflicting_perspectives: Optional[str] = Field(
+        None,
+        description="If there were any significant disagreements or conflicting perspectives from the specialist agents, they are summarized here."
+    )

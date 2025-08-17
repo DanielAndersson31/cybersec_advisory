@@ -15,6 +15,7 @@ from agents.incident_responder import IncidentResponseAgent
 from agents.threat_analyst import ThreatIntelAgent
 from agents.prevention_specialist import PreventionAgent
 from agents.compliance_specialist import ComplianceAgent
+from agents.coordinator import CoordinatorAgent
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +27,18 @@ class AgentFactory:
         """Initialize the factory with shared clients."""
         self.llm_client = llm_client
         self.mcp_client = mcp_client
-        self.agent_class_map = {
+        self.agent_map = {
             AgentRole.INCIDENT_RESPONSE: IncidentResponseAgent,
-            AgentRole.THREAT_INTEL: ThreatIntelAgent,
             AgentRole.PREVENTION: PreventionAgent,
+            AgentRole.THREAT_INTEL: ThreatIntelAgent,
             AgentRole.COMPLIANCE: ComplianceAgent,
+            AgentRole.COORDINATOR: CoordinatorAgent,
         }
 
     def create_agent(self, role: AgentRole) -> BaseSecurityAgent:
-        """Create a single agent with injected dependencies."""
-        if role in self.agent_class_map:
-            AgentClass = self.agent_class_map[role]
+        """Creates a single agent by its role."""
+        if role in self.agent_map:
+            AgentClass = self.agent_map[role]
             try:
                 agent_instance = AgentClass(llm_client=self.llm_client, mcp_client=self.mcp_client)
                 logger.info(f"Successfully created agent: {agent_instance.name}")
@@ -55,7 +57,7 @@ class AgentFactory:
 
         for agent_config in enabled_agent_configs:
             role = agent_config["role"]
-            if role in self.agent_class_map:
+            if role in self.agent_map:
                 agent_pool[role] = self.create_agent(role)
             elif role != AgentRole.COORDINATOR:
                 logger.warning(f"Skipping disabled or unmapped agent role: {role.value}")
