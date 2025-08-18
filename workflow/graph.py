@@ -16,6 +16,8 @@ from agents.factory import AgentFactory
 from cybersec_mcp.cybersec_client import CybersecurityMCPClient
 from openai import AsyncOpenAI
 from config.agent_config import AgentRole
+from .quality_gates import QualityGateSystem
+from .router import QueryRouter
 
 
 logger = logging.getLogger(__name__)
@@ -43,10 +45,11 @@ class CybersecurityTeamGraph:
         self.coordinator = self.factory.create_agent(AgentRole.COORDINATOR)
         
         # Initialize workflow components
-        # Nodes now handle quality gates internally
         self.nodes = WorkflowNodes(
             agents=self.agents,
             coordinator=self.coordinator,
+            router=QueryRouter(llm_client),
+            quality_system=QualityGateSystem(llm_client),
             enable_quality_gates=enable_quality_checks
         )
         self.error_handler = ErrorHandler()

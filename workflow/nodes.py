@@ -11,8 +11,6 @@ from langfuse import observe
 
 from workflow.state import WorkflowState
 from workflow.schemas import TeamResponse
-from workflow.router import QueryRouter
-from workflow.quality_gates import QualityGateSystem
 from config.agent_config import AgentRole
 
 logger = logging.getLogger(__name__)
@@ -23,14 +21,14 @@ class WorkflowNodes:
     Contains all node functions for the workflow graph.
     """
     
-    def __init__(self, agents: Dict[AgentRole, Any], coordinator: Any, enable_quality_gates: bool = True):
+    def __init__(self, agents: Dict[AgentRole, Any], coordinator: Any, router: Any, quality_system: Any, enable_quality_gates: bool = True):
         """
-        Initialize with available agents and a coordinator.
+        Initialize with available agents, a coordinator, and pre-initialized components.
         """
         self.agents = agents
         self.coordinator = coordinator
-        self.router = QueryRouter()
-        self.quality_system = QualityGateSystem() if enable_quality_gates else None
+        self.router = router
+        self.quality_system = quality_system
         self.enable_quality_gates = enable_quality_gates
 
     @observe(name="analyze_query")

@@ -59,13 +59,13 @@ class WebSearchResponse(BaseModel):
 class WebSearchTool:
     """Web search tool using Tavily API and LLM-based intent classification."""
     
-    def __init__(self):
+    SEARCH_CONFIDENCE_THRESHOLD = 0.7
+
+    def __init__(self, llm_client: AsyncOpenAI):
         """Initialize Tavily and Instructor clients."""
         self.tavily = AsyncTavilyClient(api_key=settings.get_secret("tavily_api_key"))
         
-        self.instructor = instructor.patch(
-            AsyncOpenAI(api_key=settings.get_secret("openai_api_key"))
-        )
+        self.instructor = instructor.patch(llm_client)
         
         # A curated list of authoritative domains for high-quality results.
         self.trusted_domains = [
@@ -183,7 +183,7 @@ class WebSearchTool:
 
             enhanced_query = query
             # Only enhance if the LLM is confident it's a cybersecurity query.
-            if intent.is_cybersecurity and intent.confidence >= settings.search_confidence_threshold:
+            if intent.is_cybersecurity and intent.confidence >= self.SEARCH_CONFIDENCE_THRESHOLD:
                 enhanced_query = intent.suggested_enhancement or self._enhance_query(query, search_type)
             
             # For cybersecurity searches, use trusted domains if none are specified.
@@ -193,7 +193,7 @@ class WebSearchTool:
                 not search_domains and 
                 search_type == "general" and 
                 intent.is_cybersecurity and 
-                intent.confidence >= settings.search_confidence_threshold
+                intent.confidence >= self.SEARCH_CONFIDENCE_THRESHOLD
             ):
                 search_domains = self.trusted_domains
             
@@ -271,12 +271,9 @@ class WebSearchTool:
         return f"{prefix} {query}"
 
 
-# Create singleton instance
-web_search_tool = WebSearchTool()
-
-
 # Export function for easy use
 async def web_search(**kwargs) -> Dict[str, Any]:
     """Web search function that MCP servers will import"""
-    response = await web_search_tool.search(**kwargs)
-    return response.model_dump()
+    # This function will be called by the MCP server, which will manage the tool instance
+    # The tool instance will be created and passed in by the server
+    pass

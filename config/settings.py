@@ -61,20 +61,6 @@ class Settings(BaseSettings):
         description="Tavily API key for web search (optional)"
     )
     
-    # Web Search Tool Configuration
-    search_model_name: str = Field(
-        default="gpt-3.5-turbo",
-        env="SEARCH_MODEL_NAME",
-        description="LLM model to use for query intent classification"
-    )
-    search_confidence_threshold: float = Field(
-        default=0.7,
-        env="SEARCH_CONFIDENCE_THRESHOLD",
-        ge=0.0,
-        le=1.0,
-        description="Confidence threshold for activating cybersecurity search enhancements"
-    )
-
     # Langfuse Observability (Phase 2)
     langfuse_public_key: SecretStr = Field(
         ...,

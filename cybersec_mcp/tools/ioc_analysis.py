@@ -3,6 +3,7 @@ Simple IOC analysis tool using VirusTotal API with Pydantic models.
 """
 
 import logging
+import re
 from typing import List, Optional, Literal
 from pydantic import BaseModel
 import httpx
@@ -47,6 +48,16 @@ class IOCAnalyzer:
             raise ValueError("VIRUSTOTAL_API_KEY not configured in settings")
         self.base_url = "https://www.virustotal.com/api/v3"
         self.client = httpx.AsyncClient()
+        
+        # Regex patterns for IOC type detection
+        self.patterns = {
+            "ip": re.compile(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"),
+            "domain": re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?\.[a-zA-Z]{2,}$"),
+            "url": re.compile(r"^https?://"),
+            "md5": re.compile(r"^[a-fA-F0-9]{32}$"),
+            "sha1": re.compile(r"^[a-fA-F0-9]{40}$"),
+            "sha256": re.compile(r"^[a-fA-F0-9]{64}$")
+        }
 
     async def analyze_indicator(self, indicator: str) -> IOCResult:
         """
@@ -178,7 +189,28 @@ ioc_analysis_tool = IOCAnalyzer()
 
 
 # Export function - returns dict for compatibility
-async def analyze_indicators(**kwargs) -> dict:
+async def analyze_indicators(
+    indicators: List[str],
+    check_reputation: bool = True,
+    enrich_data: bool = True,
+    include_context: bool = True
+) -> dict:
     """IOC analysis function that MCP servers will import"""
-    response = await ioc_analysis_tool.analyze_indicator(**kwargs)
-    return response.model_dump()
+    try:
+        results = []
+        for indicator in indicators:
+            result = await ioc_analysis_tool.analyze_indicator(indicator)
+            results.append(result)
+        
+        response = IOCAnalysisResponse(
+            total_indicators=len(indicators),
+            results=results
+        )
+        return response.model_dump()
+    except Exception as e:
+        return IOCAnalysisResponse(
+            status="error",
+            total_indicators=len(indicators),
+            results=[],
+            error=str(e)
+        ).model_dump()

@@ -5,7 +5,6 @@ from openai import AsyncOpenAI
 from langfuse import observe, get_client
 from pydantic import ValidationError
 
-from config.settings import settings
 from config.langfuse_settings import langfuse_config
 from workflow.schemas import QualityGateResult, RAGRelevanceResult, RAGGroundednessResult
 
@@ -17,11 +16,9 @@ class QualityGateSystem:
     RAG groundedness, and RAG relevance, using structured outputs.
     """
 
-    def __init__(self):
+    def __init__(self, llm_client: AsyncOpenAI):
         """Initializes the Quality Gate System."""
-        self.evaluator_llm = instructor.patch(
-            AsyncOpenAI(api_key=settings.get_secret("openai_api_key"))
-        )
+        self.evaluator_llm = instructor.patch(llm_client)
         self.langfuse = langfuse_config.client if langfuse_config.client else get_client()
 
     @observe()

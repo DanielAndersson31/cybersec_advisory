@@ -7,9 +7,10 @@ Provides all cybersecurity tools for the multi-agent advisory system.
 import logging
 from typing import Dict, Any, List, Optional
 from fastmcp import FastMCP
+from openai import AsyncOpenAI
 from config.settings import settings # Import the Pydantic settings
 from cybersec_mcp.tools import (
-    web_search,
+    WebSearchTool,
     knowledge_search,
     analyze_indicators,
     search_vulnerabilities,
@@ -25,6 +26,12 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Create a single, shared OpenAI client for all tools that need it
+shared_llm_client = AsyncOpenAI(api_key=settings.get_secret("openai_api_key"))
+
+# Instantiate tools that require the LLM client
+web_search_tool_instance = WebSearchTool(llm_client=shared_llm_client)
 
 # Initialize FastMCP server directly from Pydantic settings
 mcp = FastMCP(
@@ -68,7 +75,7 @@ async def search_web(
     """
     try:
         logger.info(f"Web search: {query} (type: {search_type})")
-        result = await web_search(
+        result = await web_search_tool_instance.search(
             query=query,
             max_results=max_results,
             search_type=search_type,
@@ -76,7 +83,7 @@ async def search_web(
             time_range=time_range
         )
         logger.info(f"Web search completed: {result.get('total_results', 0)} results")
-        return result
+        return result.model_dump()
     except Exception as e:
         logger.error(f"Web search error for query '{query}': {str(e)}")
         return {

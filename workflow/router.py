@@ -21,11 +21,9 @@ class QueryRouter:
     Routes queries to appropriate cybersecurity agents using a semantic, LLM-based approach.
     """
     
-    def __init__(self):
+    def __init__(self, llm_client: AsyncOpenAI):
         """Initialize the router with an instructor-patched LLM client."""
-        self.llm = instructor.patch(
-            AsyncOpenAI(api_key=settings.get_secret("openai_api_key"))
-        )
+        self.llm = instructor.patch(llm_client)
         self.agent_expertise = {
             AgentRole.INCIDENT_RESPONSE: "Handles active security incidents, breaches, malware infections, and suspicious activities. Focuses on containment, eradication, and recovery.",
             AgentRole.PREVENTION: "Focuses on proactive defense, secure architecture, vulnerability management, and risk mitigation. Designs and recommends security controls.",
