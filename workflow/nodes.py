@@ -110,8 +110,16 @@ class WorkflowNodes:
                 logger.info(f"Consulting {agent.name}...")
                 structured_response = await agent.respond(messages=messages)
                 
-                # TODO: Properly extract tool usage information from the new flow
-                tools_used = []
+                # Extract tool usage information from the structured response
+                tools_used = [
+                    {
+                        "tool_name": tool.tool_name,
+                        "tool_args": tool.tool_args,
+                        "result": tool.tool_result,
+                        "timestamp": tool.timestamp.isoformat()
+                    }
+                    for tool in structured_response.tools_used
+                ]
 
                 team_response = TeamResponse(
                     agent_name=agent.name,

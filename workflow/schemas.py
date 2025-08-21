@@ -3,6 +3,16 @@ from pydantic import BaseModel, Field
 from config.agent_config import AgentRole
 from datetime import datetime
 
+class ToolUsage(BaseModel):
+    """Represents a tool that was used by an agent during analysis."""
+    tool_name: str = Field(..., description="The name of the tool that was used.")
+    tool_args: Dict[str, Any] = Field(..., description="The arguments passed to the tool.")
+    tool_result: str = Field(..., description="The result returned by the tool.")
+    timestamp: datetime = Field(
+        default_factory=datetime.utcnow,
+        description="When the tool was executed."
+    )
+
 class StructuredAgentResponse(BaseModel):
     """
     A structured response from a cybersecurity agent, designed for clarity,
@@ -25,6 +35,10 @@ class StructuredAgentResponse(BaseModel):
     handoff_request: Optional[AgentRole] = Field(
         None,
         description="If the agent believes another specialist should take over, this field specifies which one."
+    )
+    tools_used: List[ToolUsage] = Field(
+        default_factory=list,
+        description="A list of tools that were used during the analysis."
     )
 
 class TeamResponse(BaseModel):
