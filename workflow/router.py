@@ -5,12 +5,11 @@ Simple keyword-based routing with expertise matching.
 
 import logging
 from typing import List
-import instructor
-from openai import AsyncOpenAI
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 from pydantic import ValidationError
 
 from config.agent_config import AgentRole, INTERACTION_RULES
-from config.settings import settings
 from workflow.schemas import RoutingDecision
 
 logger = logging.getLogger(__name__)
@@ -21,9 +20,9 @@ class QueryRouter:
     Routes queries to appropriate cybersecurity agents using a semantic, LLM-based approach.
     """
     
-    def __init__(self, llm_client: AsyncOpenAI):
-        """Initialize the router with an instructor-patched LLM client."""
-        self.llm = instructor.patch(llm_client)
+    def __init__(self, llm_client: ChatOpenAI):
+        """Initialize the router with a LangChain ChatOpenAI client."""
+        self.llm = llm_client.with_structured_output(RoutingDecision)
         self.agent_expertise = {
             AgentRole.INCIDENT_RESPONSE: "Handles active security incidents, breaches, malware infections, and suspicious activities. Focuses on containment, eradication, and recovery.",
             AgentRole.PREVENTION: "Focuses on proactive defense, secure architecture, vulnerability management, and risk mitigation. Designs and recommends security controls.",
@@ -38,12 +37,7 @@ class QueryRouter:
         prompt = self._build_routing_prompt(query)
         
         try:
-            decision = await self.llm.chat.completions.create(
-                model=settings.routing_model_name,
-                messages=[{"role": "user", "content": prompt}],
-                response_model=RoutingDecision,
-                max_retries=2,
-            )
+            decision = await self.llm.ainvoke([HumanMessage(content=prompt)])
             logger.info(f"Routing decision for query '{query[:50]}...': {decision.reasoning}")
             
             # Filter out any roles that are not actual agents

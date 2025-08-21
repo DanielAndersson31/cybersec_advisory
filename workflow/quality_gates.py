@@ -1,7 +1,7 @@
 import logging
 from typing import List
-import instructor
-from openai import AsyncOpenAI
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 from langfuse import observe, get_client
 from pydantic import ValidationError
 
@@ -16,9 +16,9 @@ class QualityGateSystem:
     RAG groundedness, and RAG relevance, using structured outputs.
     """
 
-    def __init__(self, llm_client: AsyncOpenAI):
+    def __init__(self, llm_client: ChatOpenAI):
         """Initializes the Quality Gate System."""
-        self.evaluator_llm = instructor.patch(llm_client)
+        self.evaluator_llm = llm_client
         self.langfuse = langfuse_config.client if langfuse_config.client else get_client()
 
     @observe()
@@ -51,12 +51,8 @@ Be thorough and critical. Specifically, assess the response for technical accura
 Return your evaluation in the required structured format.
 """
         try:
-            result = await self.evaluator_llm.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": evaluation_prompt}],
-                response_model=QualityGateResult,
-                max_retries=2,
-            )
+            structured_llm = self.evaluator_llm.with_structured_output(QualityGateResult)
+            result = await structured_llm.ainvoke([HumanMessage(content=evaluation_prompt)])
 
             langfuse.score_current_span(
                 name=f"{agent_type}_quality_score",
@@ -103,11 +99,8 @@ You are an expert cybersecurity advisor tasked with improving a team member's wo
 Provide only the improved, final response.
 """
         try:
-            enhanced = await self.evaluator_llm.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": enhancement_prompt}],
-            )
-            enhanced_content = enhanced.choices[0].message.content
+            enhanced = await self.evaluator_llm.ainvoke([HumanMessage(content=enhancement_prompt)])
+            enhanced_content = enhanced.content
             langfuse.score_current_span(name="response_enhancement_successful", value=1.0, comment="Response was successfully enhanced.")
             return enhanced_content
         
@@ -138,12 +131,8 @@ Compare the statement against the context. The statement must be directly and ex
 Provide your assessment in the required structured format.
 """
         try:
-            result = await self.evaluator_llm.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                response_model=RAGGroundednessResult,
-                max_retries=2,
-            )
+            structured_llm = self.evaluator_llm.with_structured_output(RAGGroundednessResult)
+            result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
             
             langfuse.score_current_span(
                 name="rag_groundedness",
@@ -178,12 +167,8 @@ Evaluate how relevant the context is for forming a comprehensive answer to the u
 Provide your assessment in the required structured format.
 """
         try:
-            result = await self.evaluator_llm.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
-                response_model=RAGRelevanceResult,
-                max_retries=2,
-            )
+            structured_llm = self.evaluator_llm.with_structured_output(RAGRelevanceResult)
+            result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
             
             langfuse.score_current_span(
                 name="rag_relevance",

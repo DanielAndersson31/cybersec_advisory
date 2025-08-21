@@ -85,47 +85,51 @@ class WorkflowNodes:
         return state
 
     @observe(name="consult_agent")
-    async def consult_agent(self, inputs: dict) -> WorkflowState:
+    async def consult_agent(self, state: WorkflowState) -> WorkflowState:
         """
-        Consults a specific agent for their expertise.
-        This node is designed to be used in a parallel map operation.
+        Consults all agents in the agents_to_consult list for their expertise.
 
         Args:
-            inputs: A dictionary containing 'agent_role' and 'messages'.
+            state: Current workflow state containing agents_to_consult and messages.
 
         Returns:
-            A dictionary containing the agent's structured response.
+            Updated state with team responses from all consulted agents.
         """
-        agent_role = inputs["agent_role"]
-        messages = inputs["messages"]
+        agents_to_consult = state["agents_to_consult"]
+        messages = state["messages"]
         
-        agent = self.agents.get(agent_role)
-        if not agent:
-            error_msg = f"Agent {agent_role} not found"
-            logger.error(error_msg)
-            # Return a structured error response
-            return {"error": error_msg, "team_responses": []}
+        # Consult each agent in the list
+        for agent_role in agents_to_consult:
+            agent = self.agents.get(agent_role)
+            if not agent:
+                error_msg = f"Agent {agent_role} not found"
+                logger.error(error_msg)
+                continue
 
-        try:
-            logger.info(f"Consulting {agent.name}...")
-            structured_response = await agent.respond(messages=messages)
-            
-            # TODO: Properly extract tool usage information from the new flow
-            tools_used = []
+            try:
+                logger.info(f"Consulting {agent.name}...")
+                structured_response = await agent.respond(messages=messages)
+                
+                # TODO: Properly extract tool usage information from the new flow
+                tools_used = []
 
-            team_response = TeamResponse(
-                agent_name=agent.name,
-                agent_role=agent_role,
-                response=structured_response,
-                tools_used=tools_used,
-            )
-            
-            logger.info(f"{agent.name} provided response (confidence: {structured_response.confidence_score:.2f})")
-            return {"team_responses": [team_response]}
+                team_response = TeamResponse(
+                    agent_name=agent.name,
+                    agent_role=agent_role,
+                    response=structured_response,
+                    tools_used=tools_used,
+                )
+                
+                state["team_responses"].append(team_response)
+                logger.info(f"{agent.name} provided response (confidence: {structured_response.confidence_score:.2f})")
 
-        except Exception as e:
-            logger.error(f"Error consulting {agent.name}: {e}")
-            return {"error": str(e), "team_responses": []}
+            except Exception as e:
+                logger.error(f"Error consulting {agent.name}: {e}")
+                state["error_count"] = state.get("error_count", 0) + 1
+                state["last_error"] = str(e)
+                continue
+        
+        return state
 
     def get_team_response_as_str(self, team_response: TeamResponse) -> str:
         """A simple node to extract the string content from a TeamResponse object."""
@@ -266,17 +270,17 @@ class WorkflowNodes:
             agent_type=agent_type
         )
         
-        state["quality_passed"] = quality_result["passed"]
-        state["quality_score"] = quality_result["overall_score"]
+        state["quality_passed"] = quality_result.passed
+        state["quality_score"] = quality_result.overall_score
         
         # If quality failed and we haven't retried too much, enhance the response
-        if not quality_result["passed"] and state["error_count"] < 2:
-            logger.info(f"Quality check failed (score: {quality_result['overall_score']:.2f}), enhancing response...")
+        if not quality_result.passed and state["error_count"] < 2:
+            logger.info(f"Quality check failed (score: {quality_result.overall_score:.2f}), enhancing response...")
             
             enhanced_response = await self.quality_system.enhance_response(
                 query=state["query"],
                 response=state["final_answer"],
-                feedback=quality_result["feedback"]
+                feedback=quality_result.feedback
             )
             
             state["final_answer"] = enhanced_response
@@ -329,12 +333,12 @@ class WorkflowNodes:
         
         # Log RAG quality results
         logger.info(
-            f"RAG Quality - Grounded: {groundedness_result.get('grounded', False)}, "
-            f"Relevance: {relevance_result.get('score', 0)}/10"
+            f"RAG Quality - Grounded: {groundedness_result.grounded}, "
+            f"Relevance: {relevance_result.score}/10"
         )
         
         # Store in state if needed
-        state["rag_grounded"] = groundedness_result.get("grounded", False)
-        state["rag_relevance_score"] = relevance_result.get("score", 0)
+        state["rag_grounded"] = groundedness_result.grounded
+        state["rag_relevance_score"] = relevance_result.score
         
         return state

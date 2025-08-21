@@ -1,13 +1,12 @@
 # agents/base_agent.py
 
-import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
-import instructor
-from openai import AsyncOpenAI
+from langchain_openai import ChatOpenAI
 from langfuse import observe
 from pydantic import ValidationError
+from langchain_core.messages import BaseMessage, SystemMessage
 
 from config.agent_config import AgentRole, get_agent_config, get_agent_tools
 from cybersec_mcp.cybersec_client import CybersecurityMCPClient
@@ -28,7 +27,7 @@ class BaseSecurityAgent(ABC):
     def __init__(
         self,
         role: AgentRole,
-        llm_client: AsyncOpenAI,
+        llm_client: ChatOpenAI,
         mcp_client: CybersecurityMCPClient,
     ):
         """
@@ -36,14 +35,14 @@ class BaseSecurityAgent(ABC):
 
         Args:
             role: The enum representing the agent's role (e.g., AgentRole.INCIDENT_RESPONSE).
-            llm_client: An initialized AsyncOpenAI client for language model calls.
+            llm_client: An initialized ChatOpenAI client for language model calls.
             mcp_client: An initialized client for executing cybersecurity tools.
         """
         self.role = role
         self.config = get_agent_config(role)
         
-        # Patch the LLM client with instructor
-        self.llm = instructor.patch(llm_client)
+        # Use LangChain's ChatOpenAI directly - no need for instructor patching
+        self.llm = llm_client
         self.mcp_client = mcp_client
 
         # Core properties loaded from the configuration file.
@@ -59,6 +58,8 @@ class BaseSecurityAgent(ABC):
             f"Initialized agent: {self.name} ({self.role.value}) with {len(self.tools)} tools."
         )
 
+
+
     @abstractmethod
     def get_system_prompt(self) -> str:
         """
@@ -68,54 +69,30 @@ class BaseSecurityAgent(ABC):
         pass
 
     @observe(name="agent_respond")
-    async def respond(self, messages: List[Dict[str, Any]]) -> StructuredAgentResponse:
+    async def respond(self, messages: List[BaseMessage]) -> StructuredAgentResponse:
         """
-        Generates a structured response by orchestrating LLM calls and tool execution.
+        Generates a structured response using LangChain's native approach.
+        
+        Args:
+            messages: List of LangChain BaseMessage objects
+            
+        Returns:
+            Structured agent response
         """
-        system_prompt = self.get_system_prompt()
-        messages_with_system = [{"role": "system", "content": system_prompt}, *messages]
-
         try:
-            # Step 1: First LLM call to decide if tools are needed
-            response = await self.llm.chat.completions.create(
-                model=self.model,
-                messages=messages_with_system,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                tools=self.tools if self.tools else None,
-                tool_choice="auto" if self.tools else None,
-            )
-            response_message = response.choices[0].message
+            # Add system message to the beginning
+            system_prompt = self.get_system_prompt()
+            messages_with_system = [SystemMessage(content=system_prompt)] + messages
 
-            # Step 2: Execute tools if the LLM requested them
-            if response_message.tool_calls:
-                messages_with_system.append(response_message)
-
-                for tool_call in response_message.tool_calls:
-                    tool_name = tool_call.function.name
-                    tool_args = json.loads(tool_call.function.arguments)
-                    
-                    logger.info(f"Agent {self.name} calling tool '{tool_name}' with args: {tool_args}")
-                    
-                    tool_output = await self._execute_tool(tool_name, tool_args)
-                    
-                    messages_with_system.append({
-                        "tool_call_id": tool_call.id,
-                        "role": "tool",
-                        "name": tool_name,
-                        "content": str(tool_output),
-                    })
-
-            # Step 3: Final LLM call to generate a structured response
-            final_response = await self.llm.chat.completions.create(
-                model=self.model,
-                messages=messages_with_system,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                response_model=StructuredAgentResponse,
-                max_retries=2,
-            )
-            return final_response
+            # Use LangChain's structured output - this handles tool calling and structured output natively
+            structured_llm = self.llm.with_structured_output(StructuredAgentResponse)
+            
+            # For now, let's use the simplified approach without tools
+            # TODO: Add tool support back using LangChain's tool binding
+            response = await structured_llm.ainvoke(messages_with_system)
+            
+            logger.info(f"Agent {self.name} generated response with confidence: {response.confidence_score:.2f}")
+            return response
 
         except ValidationError as e:
             logger.error(f"Agent {self.name} failed validation: {e}", exc_info=True)

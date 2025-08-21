@@ -3,7 +3,7 @@
 import logging
 from typing import Dict
 
-from openai import AsyncOpenAI
+from langchain_openai import ChatOpenAI
 
 # Use the centralized config package for all configuration needs.
 from config.agent_config import AgentRole, get_enabled_agents
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class AgentFactory:
     """Dependency injection and agent creation"""
 
-    def __init__(self, llm_client: AsyncOpenAI, mcp_client: CybersecurityMCPClient):
+    def __init__(self, llm_client: ChatOpenAI, mcp_client: CybersecurityMCPClient):
         """Initialize the factory with shared clients."""
         self.llm_client = llm_client
         self.mcp_client = mcp_client

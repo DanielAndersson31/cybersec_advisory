@@ -4,7 +4,7 @@ Orchestrates how agents collaborate to answer queries.
 """
 
 import logging
-from typing import Literal, Optional, List
+from typing import Literal, Optional
 
 from langgraph.graph import StateGraph, END
 from langfuse import observe
@@ -14,7 +14,8 @@ from workflow.nodes import WorkflowNodes
 from workflow.fallbacks import ErrorHandler
 from agents.factory import AgentFactory
 from cybersec_mcp.cybersec_client import CybersecurityMCPClient
-from openai import AsyncOpenAI
+from langchain_openai import ChatOpenAI
+from config.settings import settings
 from config.agent_config import AgentRole
 from .quality_gates import QualityGateSystem
 from .router import QueryRouter
@@ -36,7 +37,11 @@ class CybersecurityTeamGraph:
             enable_quality_checks: Whether to enable quality gates
         """
         # Create shared clients
-        llm_client = AsyncOpenAI()
+        llm_client = ChatOpenAI(
+            model=settings.default_model,
+            temperature=0.1,
+            max_tokens=4000
+        )
         mcp_client = CybersecurityMCPClient()
 
         # Create all agents using the factory
@@ -136,22 +141,7 @@ class CybersecurityTeamGraph:
         
         return workflow
 
-    def _prepare_consultation_inputs(self, state: WorkflowState) -> dict:
-        """Prepares the inputs for the parallel consultation map."""
-        inputs = []
-        for agent_role in state["agents_to_consult"]:
-            inputs.append({
-                "agent_role": agent_role,
-                "messages": state["messages"],
-            })
-        return {"inputs": inputs}
 
-    def _aggregate_consultation_outputs(self, state: WorkflowState, outputs: List[dict]) -> WorkflowState:
-        """Aggregates the outputs from the parallel consultation map."""
-        # The outputs are lists of dictionaries, we need to flatten them
-        all_responses = [item for sublist in outputs for item in sublist.get("team_responses", [])]
-        state["team_responses"].extend(all_responses)
-        return state
 
     def _should_consult(self, state: WorkflowState) -> Literal["consult", "coordinate"]:
         """Decide whether to consult agents or go directly to synthesis."""
