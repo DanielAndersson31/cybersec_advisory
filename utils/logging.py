@@ -24,7 +24,7 @@ class JsonFormatter(logging.Formatter):
 def setup_logging(
     level: int = logging.INFO,
     log_to_console: bool = True,
-    log_file_path: str = "app.log.json"
+    log_file_path: str = "logs/app.log.json"
 ):
     """
     Configures the root logger for the application.
@@ -44,6 +44,10 @@ def setup_logging(
         root_logger.addHandler(console_handler)
 
     if log_file_path:
+        # Ensure the logs directory exists
+        import os
+        os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+        
         file_handler = TimedRotatingFileHandler(
             log_file_path, when="midnight", interval=1, backupCount=7
         )

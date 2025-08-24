@@ -1,39 +1,17 @@
 """
-Web search tool using Tavily API for cybersecurity queries.
+Web search tool using Tavily API with LLM-enhanced query optimization.
 """
 
-from typing import Dict, Any, List, Optional, Literal
+from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field, ValidationError
 from tavily import AsyncTavilyClient
 import logging
 from config.settings import settings
 import instructor
 from openai import AsyncOpenAI
-from async_lru import alru_cache
 
 
 logger = logging.getLogger(__name__)
-
-
-class QueryIntent(BaseModel):
-    """The classified intent of a user's search query."""
-    is_cybersecurity: bool = Field(description="Whether the query is cybersecurity-related")
-    confidence: float = Field(
-        ge=0.0, le=1.0, 
-        description="Confidence score between 0 and 1"
-    )
-    reasoning: str = Field(
-        max_length=500,
-        description="Brief explanation of the classification"
-    )
-    category: Optional[Literal[
-        "threat_intelligence", "vulnerability", "compliance", 
-        "incident_response", "security_tools", "general_security", "non_security"
-    ]] = Field(description="Specific cybersecurity category if applicable")
-    suggested_enhancement: Optional[str] = Field(
-        max_length=200,
-        description="Enhanced query for better search results"
-    )
 
 
 class WebSearchResult(BaseModel):
@@ -50,125 +28,85 @@ class WebSearchResponse(BaseModel):
     status: str = Field(default="success", description="Status of the search operation")
     query: str = Field(description="Original search query")
     enhanced_query: str = Field(description="Enhanced or modified query used for search")
-    intent_reasoning: Optional[str] = Field(description="Reasoning for query classification")
     results: List[WebSearchResult] = Field(description="List of search results")
     total_results: int = Field(ge=0, description="Total number of results returned")
-    error: Optional[str] = Field(description="Error message if search failed")
+    error: Optional[str] = Field(default=None, description="Error message if search failed")
 
 
 class WebSearchTool:
-    """Web search tool using Tavily API and LLM-based intent classification."""
-    
-    SEARCH_CONFIDENCE_THRESHOLD = 0.7
+    """Web search tool with LLM-enhanced query optimization."""
 
     def __init__(self, llm_client: AsyncOpenAI):
         """Initialize Tavily and Instructor clients."""
         self.tavily = AsyncTavilyClient(api_key=settings.get_secret("tavily_api_key"))
-        
         self.instructor = instructor.patch(llm_client)
-        
-        # A curated list of authoritative domains for high-quality results.
-        self.trusted_domains = [
-            # Threat Intelligence & News
-            "bleepingcomputer.com",
-            "darkreading.com",
-            "thehackernews.com",
-            "threatpost.com",
-            "krebsonsecurity.com",
-            
-            # Vulnerability & Standards Databases
-            "cve.mitre.org",
-            "nvd.nist.gov",
-            "owasp.org",
 
-            # Government & Research Organizations
-            "cisa.gov",
-            "us-cert.gov",
-            "sans.org",
-
-            # Leading Security Vendor Blogs (can be adjusted)
-            "fireeye.com/blog",
-            "crowdstrike.com/blog",
-            "mandiant.com/resources/blog"
-        ]
-
-    @alru_cache(maxsize=128)
-    async def classify_query_intent(self, query: str) -> QueryIntent:
+    async def _craft_search_query(self, user_query: str) -> str:
         """
-        Use an LLM to classify if the query is cybersecurity-related.
-        This method is cached to improve performance for repeated queries.
+        Use LLM to craft better search terms for optimal results.
         """
         try:
-            # Enhanced prompt for better classification
-            return await self.instructor.chat.completions.create(
-                model=settings.search_model_name,
-                response_model=QueryIntent,
-                max_retries=2,  # Add retry logic for reliability
-                messages=[
-                    {
-                        "role": "system", 
-                        "content": """You are a cybersecurity expert who classifies search queries.
-                        
-                        Analyze if the query relates to:
-                        - Cybersecurity threats, vulnerabilities, malware
-                        - IT security, information security, data protection
-                        - Security tools, frameworks, compliance (SOC2, ISO27001, etc.)
-                        - Incident response, forensics, risk management
-                        - Network security, endpoint security, cloud security
-                        
-                        Provide a confidence score and suggest query enhancements for better search results.
-                        Be conservative - only mark as cybersecurity if clearly related."""
-                    },
-                    {
-                        "role": "user", 
-                        "content": f"""Classify this search query:
-                        
-                        Query: "{query}"
-                        
-                        Consider:
-                        1. Is this clearly cybersecurity-related?
-                        2. What specific category does it fall into?
-                        3. How could the query be enhanced for better search results?
-                        4. What's your confidence level (0.0 to 1.0)?"""
-                    }
-                ]
+            # Simple prompt to enhance search queries
+            messages = [
+                {
+                    "role": "system",
+                    "content": """You are a search query optimization expert. Your job is to take a user's query and create the best possible search terms for web search engines.
+
+Guidelines:
+- Keep it concise but specific
+- Add relevant keywords that would help find better results
+- Remove unnecessary words and filler
+- For technical topics, include proper terminology
+- For current events, add temporal keywords if relevant
+- For locations, include geographic specifics if helpful
+
+Examples:
+User: "What's the weather like in London?"
+Enhanced: "London weather today current conditions"
+
+User: "How to install Docker?"
+Enhanced: "Docker installation guide setup tutorial"
+
+User: "NIST framework"
+Enhanced: "NIST Cybersecurity Framework guide implementation"
+
+User: "Latest ransomware attack"
+Enhanced: "ransomware attack 2024 latest cybersecurity news"
+
+Return ONLY the enhanced search query, nothing else."""
+                },
+                {
+                    "role": "user",
+                    "content": f"Enhance this search query: {user_query}"
+                }
+            ]
+
+            # Use instructor-patched client directly for simple string response
+            response = await self.instructor.chat.completions.create(
+                model=settings.default_model,  # Use default model since search_model_name might not exist
+                messages=messages,
+                max_tokens=100,
+                temperature=0.1
             )
-        except ValidationError as e:
-            logger.error(f"Validation error in intent classification: {e}")
-            # Fallback with proper validation
-            return QueryIntent(
-                is_cybersecurity=False, 
-                confidence=0.0, 
-                reasoning=f"Validation failed: {str(e)}",
-                category="non_security"
-            )
+            
+            enhanced = response.choices[0].message.content
+            return enhanced.strip() if enhanced else user_query
+            
         except Exception as e:
-            logger.error(f"Intent classification LLM error: {e}")
-            # Fallback to a safe default
-            return QueryIntent(
-                is_cybersecurity=False, 
-                confidence=0.0, 
-                reasoning=f"LLM classification failed: {str(e)}",
-                category="non_security"
-            )
+            logger.warning(f"Query enhancement failed: {e}, using original query")
+            return user_query
 
     async def search(
         self,
         query: str,
-        max_results: int = 5,
-        search_type: str = "general",
-        include_domains: Optional[List[str]] = None,
-        time_range: Optional[str] = None
+        max_results: int = 5
     ) -> WebSearchResponse:
         """
-        Search the web for cybersecurity information.
+        Search the web with LLM-enhanced query crafting.
         
         Args:
-            query: Search query string
+            query: User's search query
             max_results: Maximum number of results (1-10)
-            search_type: Type of search - 'general', 'news', or 'research'
-            include_domains: Optional list of domains to search within
-            time_range: Filter by time - 'd' (day), 'w' (week), 'm' (month), 'y' (year)
             
         Returns:
             A WebSearchResponse object.
@@ -177,35 +115,14 @@ class WebSearchTool:
         max_results = min(max_results, 10)
         
         try:
-            # Classify intent to determine if enhancement is needed.
-            intent = await self.classify_query_intent(query)
-            logger.info(f"Query intent classified: {intent.model_dump_json(indent=2)}")
-
-            enhanced_query = query
-            # Only enhance if the LLM is confident it's a cybersecurity query.
-            if intent.is_cybersecurity and intent.confidence >= self.SEARCH_CONFIDENCE_THRESHOLD:
-                enhanced_query = intent.suggested_enhancement or self._enhance_query(query, search_type)
-            
-            # For cybersecurity searches, use trusted domains if none are specified.
-            # For general queries, search the whole web unless specific domains are provided.
-            search_domains = include_domains
-            if (
-                not search_domains and 
-                search_type == "general" and 
-                intent.is_cybersecurity and 
-                intent.confidence >= self.SEARCH_CONFIDENCE_THRESHOLD
-            ):
-                search_domains = self.trusted_domains
-            
-            # Call Tavily API with the potentially enhanced query.
-            logger.info(f"Searching for: '{enhanced_query}' within domains: {search_domains or 'any'}")
+            # Use LLM to craft better search terms
+            enhanced_query = await self._craft_search_query(query)
+            logger.info(f"Original query: '{query}' → Enhanced: '{enhanced_query}'")
             
             results = await self.tavily.search(
                 query=enhanced_query,
                 max_results=max_results,
-                search_depth="basic" if search_type != "research" else "advanced",
-                include_domains=search_domains,
-                time_range=time_range
+                search_depth="basic"
             )
             
             # Format results with validation
@@ -227,14 +144,13 @@ class WebSearchTool:
             response = WebSearchResponse(
                 query=query,
                 enhanced_query=enhanced_query,
-                intent_reasoning=intent.reasoning,
                 results=formatted_results,
                 total_results=len(formatted_results)
             )
             
-            # Validate response quality
-            if len(formatted_results) == 0 and intent.is_cybersecurity:
-                logger.warning(f"No results found for cybersecurity query: {query}")
+            # Log result quality
+            if len(formatted_results) == 0:
+                logger.warning(f"No results found for enhanced query: {enhanced_query}")
             
             return response
             
@@ -258,18 +174,6 @@ class WebSearchTool:
                 total_results=0,
                 error=str(e)
             )
-    
-    def _enhance_query(self, query: str, search_type: str) -> str:
-        """Provides a fallback enhancement for confirmed cybersecurity queries."""
-        prefix = "cybersecurity"
-        if search_type == "news":
-            # For news, adding a year can help focus results on recent events.
-            return f"{prefix} news {query} 2025"
-        elif search_type == "research":
-            return f"{prefix} research paper {query}"
-        
-        return f"{prefix} {query}"
-
 
 # Export function for easy use
 async def web_search(**kwargs) -> Dict[str, Any]:

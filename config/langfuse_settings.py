@@ -1,6 +1,6 @@
 from langfuse import Langfuse
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 from config.settings import settings  # Import your settings
 
@@ -26,7 +26,7 @@ class LangfuseConfig:
         )
         
         # Track initialization time
-        self.initialized_at = datetime.utcnow()
+        self.initialized_at = datetime.now(timezone.utc)
         print(f"Langfuse client initialized at {self.initialized_at}")
     
     def get_evaluator_prompts(self) -> Dict[str, Dict[str, Any]]:
@@ -243,7 +243,7 @@ Provide a JSON response with this exact format:
     # Helper methods
     def _get_timestamp(self) -> str:
         """Get current timestamp in ISO format"""
-        return datetime.utcnow().isoformat() + "Z"
+        return datetime.now(timezone.utc).isoformat() + "Z"
     
     def _generate_session_id(self) -> str:
         """Generate unique session ID for tracking"""

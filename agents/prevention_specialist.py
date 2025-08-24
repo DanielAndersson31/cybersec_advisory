@@ -2,7 +2,6 @@
 
 from .base_agent import BaseSecurityAgent
 from config.agent_config import AgentRole
-from cybersec_mcp.cybersec_client import CybersecurityMCPClient
 from langchain_openai import ChatOpenAI
 
 
@@ -11,8 +10,8 @@ class PreventionAgent(BaseSecurityAgent):
     The specialist agent for security architecture and proactive defense.
     """
 
-    def __init__(self, llm_client: ChatOpenAI, mcp_client: CybersecurityMCPClient):
-        super().__init__(AgentRole.PREVENTION, llm_client, mcp_client)
+    def __init__(self, llm_client: ChatOpenAI):
+        super().__init__(AgentRole.PREVENTION, llm_client)
 
     def get_system_prompt(self) -> str:
         """

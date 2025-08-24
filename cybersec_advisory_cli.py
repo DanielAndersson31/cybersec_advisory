@@ -3,14 +3,15 @@
 Command-line interface for the Cybersecurity Multi-Agent Advisory System.
 """
 import asyncio
+import logging
 import sys
+import uuid
 from pathlib import Path
-from dotenv import load_dotenv
+
 import typer
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
-import uuid
-import json
 
 # --- Environment and Path Setup ---
 # 1. Add project root to Python's import path.
@@ -27,6 +28,14 @@ else:
     print(f"WARNING: .env file not found at {dotenv_path}.")
 
 
+# --- Logging Setup ---
+# Initialize logging before other imports
+from utils.logging import setup_logging
+
+# Set up logging with INFO level for production
+setup_logging(level=logging.INFO, log_to_console=True)
+logger = logging.getLogger(__name__)
+
 # --- Application Imports ---
 # Now that the environment is loaded, we can safely import application components.
 from conversation.manager import ConversationManager
@@ -39,6 +48,7 @@ async def initialize_system():
     """
     Initializes all necessary components for the advisory system.
     """
+    logger.info("🚀 Initializing Cybersecurity Advisory System...")
     console.print("[bold green]Initializing Cybersecurity Advisory System...[/bold green]")
     
     # 1. Initialize the workflow graph (which now handles its own clients)
@@ -48,6 +58,7 @@ async def initialize_system():
     manager = ConversationManager(workflow=workflow)
     await manager.initialize() # Async initialization
     
+    logger.info("✅ System initialized successfully")
     console.print("[bold green]System initialized successfully.[/bold green]")
     return manager
 
@@ -74,14 +85,17 @@ def chat(
                 console.print(Panel(response, title="Team Response", border_style="green"))
 
             # Enter interactive chat loop
+            logger.info("💬 Starting interactive chat mode")
             console.print("[bold cyan]Entering interactive chat mode. Type 'exit', 'quit', or 'q' to end.[/bold cyan]")
             while True:
                 user_input = console.input("[bold yellow]You: [/bold yellow]")
                 
                 if user_input.lower() in ["exit", "quit", "q"]:
+                    logger.info("👋 User ended session")
                     console.print("[bold cyan]Ending session. Goodbye![/bold cyan]")
                     break
 
+                logger.info(f"📝 Processing user query: '{user_input[:50]}...'")
                 response = await manager.chat(message=user_input, thread_id=thread_id)
                 console.print(Panel(response, title="Team Response", border_style="green"))
 

@@ -1,14 +1,13 @@
 """
-Unified Cybersecurity MCP Client
+External MCP Client for Cybersecurity Tools
 
-Simple, clean MCP client combining transport and business logic.
-Follows the project's patterns for straightforward, maintainable code.
+Lightweight MCP client for external integrations (Claude Desktop, etc.).
+For internal tool usage, use cybersec_tools.py instead.
 """
 
 import httpx
 import logging
-from typing import Dict, Any, Optional, List
-from langchain_core.tools import tool
+from typing import Dict, Any, Optional
 
 from config.settings import settings
 
@@ -20,16 +19,22 @@ class MCPClientError(Exception):
     pass
 
 
-class CybersecurityMCPClient:
+class ExternalMCPClient:
     """
-    Unified MCP client for cybersecurity tools.
-    Combines HTTP transport with cybersecurity-specific methods.
+    Lightweight MCP client for external integrations only.
+    
+    Use Cases:
+    - Claude Desktop integration
+    - External tool access via MCP protocol
+    - Cross-process communication
+    
+    For internal application tools, use cybersec_tools.py instead.
     """
     
     def __init__(self, agent_name: Optional[str] = None):
         """Initialize the MCP client"""
         self.agent_name = agent_name
-        self.server_url = f"http://{settings.mcp_server_host}:{settings.mcp_server_port}/cybersec_mcp"
+        self.server_url = f"http://{settings.mcp_server_host}:{settings.mcp_server_port}/cybersec_mcp/"
         self.timeout = 30.0 # Default timeout
         
         # Simple HTTP client setup
@@ -71,13 +76,16 @@ class CybersecurityMCPClient:
             }
         }
         
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream"
+        }
         if self.agent_name:
             headers["X-MCP-Agent"] = self.agent_name
         
         try:
             response = await self._client.post(
-                f"{self.server_url}/call_tool",
+                self.server_url,  # FastMCP serves tools at the base path
                 json=payload,
                 headers=headers
             )
@@ -98,214 +106,60 @@ class CybersecurityMCPClient:
         """Permissions are currently disabled."""
         return True
     
-    # Cybersecurity-specific convenience methods
-    async def search_web(self, query: str, max_results: int = 5) -> Dict[str, Any]:
-        """Search web for cybersecurity information"""
-        # SERVER TOOL: search_web(query, max_results, search_type, include_domains, time_range)
-        return await self.call_tool("search_web", {
-            
-            "query": query,
-            "max_results": max_results
-        })
+    # For external integrations, use call_tool directly
+    # All convenience methods moved to cybersec_tools.py for internal use
+
     
-    async def analyze_ioc(self, indicator: str, indicator_type: str) -> Dict[str, Any]:
-        """Analyze an indicator of compromise"""
-        # SERVER TOOL: analyze_ioc(indicators: List[str], ...)
-        # NOTE: indicator_type is ignored as the server tool does not use it.
-        return await self.call_tool("analyze_ioc", {
-            "indicators": [indicator], # Server expects a list
-        })
+    # Example usage for external integrations:
+    # client = ExternalMCPClient()
+    # result = await client.call_tool("search_web", {"query": "threat intel", "max_results": 5})
     
-    async def search_vulnerabilities(self, cve_id: str = None, keywords: str = None) -> Dict[str, Any]:
-        """Search for vulnerability information"""
-        # SERVER TOOL: find_vulnerabilities(query: str, ...)
-        # Use cve_id as the primary query if available, otherwise use keywords.
-        query = cve_id if cve_id else keywords
-        return await self.call_tool("find_vulnerabilities", {"query": query})
-    
-    async def get_threat_feeds(
-        self, 
-        query: str, 
-        limit: int = 10, 
-        fetch_full_details: bool = False
-    ) -> Dict[str, Any]:
-        """Get latest threat intelligence feeds"""
-        return await self.call_tool("get_threat_feeds", {
-            "query": query,
-            "limit": limit,
-            "fetch_full_details": fetch_full_details,
-        })
-    
-    async def analyze_attack_surface(self, target: str, scan_type: str = "basic") -> Dict[str, Any]:
-        """Analyze attack surface of a target"""
-        # SERVER TOOL: scan_attack_surface(host: str)
-        # NOTE: scan_type is ignored as the server tool does not use it.
-        return await self.call_tool("scan_attack_surface", {
-            "host": target,
-        })
-    
-    async def check_exposure(self, email_or_domain: str) -> Dict[str, Any]:
-        """Check for email or domain exposure."""
-        # SERVER TOOL: exposure_checker_tool(email: str)
-        return await self.call_tool("exposure_checker_tool", {"email": email_or_domain})
+    async def list_available_tools(self) -> Dict[str, Any]:
+        """List all tools available on the MCP server"""
+        try:
+            response = await self._client.post(
+                self.server_url,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/list",
+                    "params": {}
+                },
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream"
+                }
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to list tools: {e}")
+            return {"error": str(e), "tools": []}
 
-    async def get_compliance_guidance(self, framework: str, topic: str = None) -> Dict[str, Any]:
-        """Get compliance guidance for security frameworks"""
-        # SERVER TOOL: compliance_guidance(framework, data_type, region, incident_type)
-        return await self.call_tool("compliance_guidance", {
-            "framework": framework,
-            "incident_type": topic, # Map topic to incident_type
-        })
-    
-    async def search_knowledge(self, query: str, domain: str = "cybersecurity") -> Dict[str, Any]:
-        """Search the cybersecurity knowledge base"""
-        # SERVER TOOL: search_knowledge_base(query, domain, limit, min_score)
-        return await self.call_tool("search_knowledge_base", {
-            "query": query,
-            "domain": domain
-        })
-    
-    def get_langchain_tools(self) -> List:
-        """
-        Get LangChain tools that wrap the MCP client methods.
-        Returns a list of LangChain tools that can be bound to ChatOpenAI.
-        """
-        # Create tool instances that capture 'self' in their closure
-        @tool
-        async def web_search_tool(query: str, max_results: int = 5) -> str:
-            """Search the web for cybersecurity information and news."""
-            try:
-                result = await self.search_web(query, max_results)
-                # Extract key information and format as string
-                if result.get("results"):
-                    formatted_results = []
-                    for item in result["results"][:max_results]:
-                        title = item.get("title", "No title")
-                        snippet = item.get("snippet", "No description")
-                        url = item.get("url", "")
-                        formatted_results.append(f"**{title}**\n{snippet}\nSource: {url}\n")
-                    return "\n".join(formatted_results)
-                return "No results found for the query."
-            except Exception as e:
-                return f"Web search failed: {str(e)}"
 
-        @tool
-        async def ioc_analysis_tool(indicator: str) -> str:
-            """Analyze an Indicator of Compromise (IOC) like IP address, domain, or file hash."""
-            try:
-                result = await self.analyze_ioc(indicator, "auto")
-                # Format the analysis result
-                if result.get("analysis"):
-                    analysis = result["analysis"]
-                    summary = f"IOC Analysis for {indicator}:\n"
-                    summary += f"Status: {analysis.get('status', 'Unknown')}\n"
-                    if analysis.get("malicious"):
-                        summary += "⚠️ MALICIOUS INDICATOR DETECTED\n"
-                    summary += f"Details: {analysis.get('details', 'No additional details')}\n"
-                    return summary
-                return f"Could not analyze indicator: {indicator}"
-            except Exception as e:
-                return f"IOC analysis failed: {str(e)}"
+# For backward compatibility
+CybersecurityMCPClient = ExternalMCPClient
 
-        @tool  
-        async def vulnerability_search_tool(cve_id: str) -> str:
-            """Search for details about a CVE (Common Vulnerabilities and Exposures) ID."""
-            try:
-                result = await self.search_vulnerabilities(cve_id=cve_id)
-                # Format vulnerability information
-                if result.get("vulnerabilities"):
-                    vuln_info = []
-                    for vuln in result["vulnerabilities"][:3]:  # Limit to top 3
-                        info = f"CVE: {vuln.get('id', 'Unknown')}\n"
-                        info += f"Severity: {vuln.get('severity', 'Unknown')}\n"
-                        info += f"Score: {vuln.get('score', 'N/A')}\n"
-                        info += f"Description: {vuln.get('description', 'No description')}\n"
-                        vuln_info.append(info)
-                    return "\n---\n".join(vuln_info)
-                return f"No vulnerability information found for {cve_id}"
-            except Exception as e:
-                return f"Vulnerability search failed: {str(e)}"
 
-        @tool
-        async def knowledge_search_tool(query: str) -> str:
-            """Search the internal knowledge base for company policies, playbooks, and documentation."""
-            try:
-                result = await self.search_knowledge(query)
-                # Format knowledge base results
-                if result.get("documents"):
-                    docs = []
-                    for doc in result["documents"][:3]:  # Limit to top 3
-                        title = doc.get("title", "Untitled Document")
-                        content = doc.get("content", "No content available")
-                        score = doc.get("score", 0)
-                        docs.append(f"**{title}** (Relevance: {score:.2f})\n{content[:300]}...")
-                    return "\n\n---\n\n".join(docs)
-                return "No relevant documents found in knowledge base."
-            except Exception as e:
-                return f"Knowledge search failed: {str(e)}"
+# Example usage for external integrations:
+"""
+# Basic tool calling
+client = ExternalMCPClient()
+result = await client.call_tool("search_web", {
+    "query": "latest cybersecurity threats", 
+    "max_results": 5
+})
 
-        @tool
-        async def attack_surface_analyzer_tool(domain: str) -> str:
-            """Analyze a domain's attack surface to identify exposed assets and vulnerabilities."""
-            try:
-                result = await self.analyze_attack_surface(domain)
-                # Format attack surface analysis
-                summary = f"Attack Surface Analysis for {domain}:\n"
-                if result.get("exposed_services"):
-                    summary += f"Exposed Services: {len(result['exposed_services'])}\n"
-                    for service in result["exposed_services"][:5]:  # Top 5
-                        port = service.get("port", "Unknown")
-                        service_name = service.get("service", "Unknown")
-                        summary += f"  - Port {port}: {service_name}\n"
-                if result.get("vulnerabilities"):
-                    summary += f"Potential Vulnerabilities: {len(result['vulnerabilities'])}\n"
-                return summary
-            except Exception as e:
-                return f"Attack surface analysis failed: {str(e)}"
+# List available tools
+tools = await client.list_available_tools()
+print("Available tools:", tools)
 
-        @tool
-        async def threat_feeds_tool(topic: str) -> str:
-            """Query threat intelligence feeds for information about threat actors, campaigns, or TTPs."""
-            try:
-                result = await self.get_threat_feeds(topic, limit=5)
-                # Format threat intelligence
-                if result.get("feeds"):
-                    threats = []
-                    for feed in result["feeds"]:
-                        title = feed.get("title", "Unknown Threat")
-                        description = feed.get("description", "No description")
-                        severity = feed.get("severity", "Unknown")
-                        threats.append(f"**{title}** (Severity: {severity})\n{description}")
-                    return "\n\n---\n\n".join(threats)
-                return f"No threat intelligence found for: {topic}"
-            except Exception as e:
-                return f"Threat feeds query failed: {str(e)}"
+# Don't forget to close the client
+await client.close()
 
-        @tool
-        async def compliance_guidance_tool(framework: str, query: str) -> str:
-            """Get compliance guidance for security frameworks like GDPR, HIPAA, PCI-DSS."""
-            try:
-                result = await self.get_compliance_guidance(framework, query)
-                # Format compliance guidance
-                if result.get("guidance"):
-                    guidance = result["guidance"]
-                    summary = f"Compliance Guidance for {framework}:\n"
-                    summary += f"Topic: {query}\n\n"
-                    summary += guidance.get("recommendations", "No specific recommendations available.")
-                    if guidance.get("requirements"):
-                        summary += f"\n\nKey Requirements:\n{guidance['requirements']}"
-                    return summary
-                return f"No compliance guidance found for {framework} regarding {query}"
-            except Exception as e:
-                return f"Compliance guidance query failed: {str(e)}"
-
-        # Return all the tools
-        return [
-            web_search_tool,
-            ioc_analysis_tool, 
-            vulnerability_search_tool,
-            knowledge_search_tool,
-            attack_surface_analyzer_tool,
-            threat_feeds_tool,
-            compliance_guidance_tool
-        ]
+# Or use as context manager
+async with ExternalMCPClient() as client:
+    result = await client.call_tool("analyze_ioc", {
+        "indicators": ["1.2.3.4"]
+    })
+"""

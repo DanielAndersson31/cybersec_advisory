@@ -4,7 +4,7 @@ Uses Pydantic for consistency and type safety.
 """
 
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import Field
 from langgraph.graph import MessagesState
 
@@ -19,6 +19,10 @@ class WorkflowState(MessagesState):
     """
     # User query
     query: str
+    
+    # Triage and routing
+    response_strategy: Optional[str] = None  # "direct", "single_agent", "multi_agent"
+    estimated_complexity: Optional[str] = None  # "simple", "moderate", "complex"
     
     # Team collaboration
     team_responses: List[TeamResponse] = Field(default_factory=list)
@@ -35,7 +39,7 @@ class WorkflowState(MessagesState):
     
     # Workflow metadata
     thread_id: str = Field(default="default")
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: Optional[datetime] = None
     
     # RAG quality metrics (when using tools)

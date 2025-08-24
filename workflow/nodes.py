@@ -5,10 +5,10 @@ Integrated with your existing QualityGateSystem.
 
 import logging
 from typing import Dict, Any
-from datetime import datetime
-
+from datetime import datetime, timezone
 from langfuse import observe
-
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
+from langchain_openai import ChatOpenAI
 from workflow.state import WorkflowState
 from workflow.schemas import TeamResponse
 from config.agent_config import AgentRole
@@ -21,7 +21,7 @@ class WorkflowNodes:
     Contains all node functions for the workflow graph.
     """
     
-    def __init__(self, agents: Dict[AgentRole, Any], coordinator: Any, router: Any, quality_system: Any, enable_quality_gates: bool = True):
+    def __init__(self, agents: Dict[AgentRole, Any], coordinator: Any, router: Any, quality_system: Any, llm_client: ChatOpenAI, enable_quality_gates: bool = True):
         """
         Initialize with available agents, a coordinator, and pre-initialized components.
         """
@@ -29,60 +29,53 @@ class WorkflowNodes:
         self.coordinator = coordinator
         self.router = router
         self.quality_system = quality_system
+        self.llm_client = llm_client  # Reuse shared LLM client
         self.enable_quality_gates = enable_quality_gates
 
     @observe(name="analyze_query")
     async def analyze_query(self, state: WorkflowState) -> WorkflowState:
         """
-        Initial analysis of the user query.
+        Analyze and classify the user query to determine context and routing strategy.
+        
+        This is the main analysis step where we:
+        1. Understand what the user is asking for
+        2. Classify if it's cybersecurity-related or general
+        3. Determine the appropriate response strategy
+        4. Set up routing information for the workflow
         
         Args:
             state: Current workflow state
             
         Returns:
-            Updated state
+            Updated state with classification and routing decision
         """
-        logger.info(f"Analyzing query: {state['query'][:100]}...")
+        logger.info(f"🔍 Analyzing and classifying query: {state['query'][:100]}...")
         
         # Set metadata
-        state["started_at"] = datetime.utcnow()
-        
-        # Add to messages for context
-        from langchain_core.messages import HumanMessage
+        state["started_at"] = datetime.now(timezone.utc)
         state["messages"].append(HumanMessage(content=state["query"]))
+        
+        # Perform intelligent classification and routing decision
+        routing_decision = await self.router.determine_routing_strategy(state["query"])
+        
+        # Update state with analysis results
+        state["response_strategy"] = routing_decision.response_strategy
+        state["agents_to_consult"] = routing_decision.relevant_agents
+        state["estimated_complexity"] = routing_decision.estimated_complexity
+        
+        # Set first agent if any
+        if routing_decision.relevant_agents:
+            state["current_agent"] = routing_decision.relevant_agents[0]
+            
+        # Determine if consensus needed
+        state["needs_consensus"] = len(routing_decision.relevant_agents) > 1
+        
+        logger.info(f"✅ Analysis complete for '{state['query'][:50]}...': {routing_decision.response_strategy} "
+                   f"(complexity: {routing_decision.estimated_complexity}) - {routing_decision.reasoning}")
         
         return state
     
-    @observe(name="route_to_agents")
-    async def route_to_agents(self, state: WorkflowState) -> WorkflowState:
-        """
-        Determine which agents should respond to this query.
-        
-        Args:
-            state: Current workflow state
-            
-        Returns:
-            Updated state with routing decision
-        """
-        # Get routing decision
-        agents_to_consult = await self.router.determine_relevant_agents(state["query"])
-        
-        state["agents_to_consult"] = agents_to_consult
-        
-        # Set first agent if any
-        if agents_to_consult:
-            state["current_agent"] = agents_to_consult[0]
-            logger.info(f"Will consult {len(agents_to_consult)} agents: {[a.value for a in agents_to_consult]}")
-        else:
-            # Default to incident response if no specific match
-            state["agents_to_consult"] = [AgentRole.INCIDENT_RESPONSE]
-            state["current_agent"] = AgentRole.INCIDENT_RESPONSE
-            logger.info("No specific expertise match, defaulting to incident response")
-        
-        # Determine if consensus needed (multiple agents with different perspectives)
-        state["needs_consensus"] = len(agents_to_consult) > 1
-        
-        return state
+    # Removed redundant triage_query - analysis now handles classification and routing decision
 
     @observe(name="consult_agent")
     async def consult_agent(self, state: WorkflowState) -> WorkflowState:
@@ -114,7 +107,6 @@ class WorkflowNodes:
                 tools_used = [
                     {
                         "tool_name": tool.tool_name,
-                        "tool_args": tool.tool_args,
                         "result": tool.tool_result,
                         "timestamp": tool.timestamp.isoformat()
                     }
@@ -136,6 +128,154 @@ class WorkflowNodes:
                 state["error_count"] = state.get("error_count", 0) + 1
                 state["last_error"] = str(e)
                 continue
+        
+        return state
+
+    @observe(name="general_response")
+    async def general_response(self, state: WorkflowState) -> WorkflowState:
+        """
+        Handle general (non-cybersecurity) queries with web search capabilities.
+        
+        Args:
+            state: Current workflow state
+            
+        Returns:
+            Updated state with general assistant response
+        """
+        logger.info(f"🤖 General assistant handling query: {state['query'][:50]}...")
+        
+        try:
+            # Use shared LLM client
+            llm = self.llm_client
+            
+            # Get web search tool from toolkit (as a LangChain tool)
+            from cybersec_tools import cybersec_toolkit
+            available_tools = cybersec_toolkit.get_all_tools()
+            web_search_tool = next(tool for tool in available_tools if tool.name == "search_web")
+            
+            # Bind the web search tool to the LLM  
+            llm_with_tools = llm.bind_tools([web_search_tool])
+            
+            # System prompt for general assistant with web search
+            system_prompt = """
+You are a helpful, friendly general assistant with web search capabilities.
+
+- Be warm, helpful, and direct
+- For greetings, respond as a friendly human would
+- For questions requiring current information (weather, news, recent events, current facts), use the web_search_tool
+- For general knowledge questions, answer directly if you're confident
+- Keep responses concise but complete
+- Be engaging and personable
+
+When to use web search:
+- Weather queries ("What's the weather in London?")
+- Current news or events
+- Recent information that might have changed
+- Facts that need to be up-to-date
+- Any topic where current/real-time information is important
+
+The web_search_tool is now generic and works for any type of query - you control the focus through your search terms.
+"""
+            
+            messages = [
+                SystemMessage(content=system_prompt),
+                *state["messages"]
+            ]
+            
+            # First LLM call - let it decide to use tools or not
+            response = await llm_with_tools.ainvoke(messages)
+            
+            # Handle tool calls if any
+            if hasattr(response, 'tool_calls') and response.tool_calls:
+                logger.info(f"General assistant making {len(response.tool_calls)} tool calls")
+                messages.append(response)
+                
+                # Execute tool calls
+                for tool_call in response.tool_calls:
+                    tool_name = tool_call["name"]
+                    tool_args = tool_call["args"]
+                    tool_id = tool_call["id"]
+                    
+                    try:
+                        # Handle web search tool specifically (since we have the instance)
+                        if tool_name == "search_web":  # Note: direct tool name, not wrapper
+                            tool_result = await web_search_tool.ainvoke(tool_args)
+                        else:
+                            # For any other tools that might be called
+                            tool_result = f"Tool {tool_name} executed successfully"
+                        
+                        messages.append(ToolMessage(
+                            content=str(tool_result),
+                            tool_call_id=tool_id
+                        ))
+                        
+                    except Exception as tool_error:
+                        logger.error(f"Tool execution failed for {tool_name}: {tool_error}")
+                        # Always provide a response, even if tool fails
+                        messages.append(ToolMessage(
+                            content=f"Tool {tool_name} failed: {str(tool_error)}",
+                            tool_call_id=tool_id
+                        ))
+                
+                # Final response after tool calls
+                final_response = await llm_with_tools.ainvoke(messages)
+                final_answer = final_response.content
+            else:
+                # No tools used, use direct response
+                final_answer = response.content
+            
+            state["final_answer"] = final_answer
+            state["messages"].append(AIMessage(content=final_answer))
+            state["completed_at"] = datetime.now(timezone.utc)
+            
+            logger.info("General assistant provided response (with web search capability)")
+            
+        except Exception as e:
+            logger.error(f"General assistant response failed: {e}")
+            # Fallback to a simple response
+            if "hey" in state["query"].lower() or "hello" in state["query"].lower() or "hi" in state["query"].lower():
+                fallback = "Hello! How can I help you today?"
+            elif "weather" in state["query"].lower():
+                fallback = "I'd love to help with weather information, but I'm having trouble accessing current data right now. You might want to check a weather website or app for the most up-to-date information."
+            else:
+                fallback = "I'd be happy to help with your question. Could you provide a bit more detail?"
+                
+            state["final_answer"] = fallback
+            state["error_count"] = state.get("error_count", 0) + 1
+            state["last_error"] = str(e)
+        
+        return state
+
+    @observe(name="direct_response")
+    async def direct_response(self, state: WorkflowState) -> WorkflowState:
+        """
+        Handle simple cybersecurity queries directly using router's tools and knowledge.
+        
+        Args:
+            state: Current workflow state
+            
+        Returns:
+            Updated state with direct response
+        """
+        logger.info(f"🎯 Handling simple cybersecurity query directly: {state['query'][:50]}...")
+        
+        try:
+            # Handle direct cybersecurity response with router tools
+            final_answer = await self.router.direct_response(state["query"])
+            
+            state["final_answer"] = final_answer
+            
+            # Add to conversation
+            state["messages"].append(AIMessage(content=state["final_answer"]))
+            state["completed_at"] = datetime.now(timezone.utc)
+            
+            logger.info("Direct cybersecurity response completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Direct response failed: {e}")
+            state["final_answer"] = f"I encountered an error while processing your cybersecurity query: {str(e)}"
+            state["error_count"] = state.get("error_count", 0) + 1
+            state["last_error"] = str(e)
         
         return state
 
@@ -191,9 +331,8 @@ class WorkflowNodes:
                 final_answer += f"{i}. {rec}\n"
 
         state["final_answer"] = final_answer
-        from langchain_core.messages import AIMessage
         state["messages"].append(AIMessage(content=state["final_answer"]))
-        state["completed_at"] = datetime.utcnow()
+        state["completed_at"] = datetime.now(timezone.utc)
         
         logger.info(f"Coordinator synthesized response from {len(state['team_responses'])} agents.")
         return state
@@ -241,7 +380,7 @@ class WorkflowNodes:
         from langchain_core.messages import AIMessage
         state["messages"].append(AIMessage(content=state["final_answer"]))
         
-        state["completed_at"] = datetime.utcnow()
+        state["completed_at"] = datetime.now(timezone.utc)
         
         logger.info(f"Synthesized response from {len(state['team_responses'])} agents")
         
@@ -250,26 +389,43 @@ class WorkflowNodes:
     @observe(name="check_quality")
     async def check_quality(self, state: WorkflowState) -> WorkflowState:
         """
-        Check quality of the final response using your QualityGateSystem.
+        Perform general response quality evaluation using LLM-as-a-Judge.
+        
+        This checks overall response quality including:
+        - Technical accuracy and correctness
+        - Completeness and helpfulness  
+        - Appropriate tone and format
+        - Actionable recommendations
+        - Professional cybersecurity standards
+        
+        If quality fails, this step can enhance/improve the response automatically.
+        This is the primary quality gate for all cybersecurity responses.
         
         Args:
-            state: Current workflow state
+            state: Current workflow state with final_answer to evaluate
             
         Returns:
-            Updated state with quality results
+            Updated state with quality_score, quality_passed, and potentially enhanced response
         """
         if not self.quality_system or not self.enable_quality_gates:
             state["quality_passed"] = True
             state["quality_score"] = 1.0
             return state
         
-        # Determine agent type for quality checking
-        # Use the primary agent or the one with highest confidence
-        if state["team_responses"]:
+        # Determine agent type for quality checking based on response strategy
+        response_strategy = state.get("response_strategy", "direct")
+        
+        if response_strategy == "general_query":
+            # For general queries, skip quality check or use general evaluation
+            logger.info("Skipping quality check for general assistant response")
+            state["quality_passed"] = True
+            state["quality_score"] = 10.0
+            return state
+        elif state["team_responses"]:
             primary_response = max(state["team_responses"], key=lambda r: r.response.confidence_score)
             agent_type = primary_response.agent_role.value
         else:
-            agent_type = "incident_response"  # Default
+            agent_type = "incident_response"  # Default for cybersecurity queries
         
         # Run quality validation
         quality_result = await self.quality_system.validate_response(
@@ -302,14 +458,28 @@ class WorkflowNodes:
     @observe(name="check_rag_quality")
     async def check_rag_quality(self, state: WorkflowState) -> WorkflowState:
         """
-        Check RAG groundedness and relevance if context chunks are available.
-        This is used when agents use tool results.
+        Evaluate RAG (Retrieval-Augmented Generation) quality when tools were used.
+        
+        This specialized quality check runs ONLY when agents used tools that retrieved 
+        external information (web search, knowledge base, vulnerability databases, etc.).
+        
+        RAG-specific evaluations:
+        - **Groundedness**: Is the final response actually based on the retrieved context?
+        - **Relevance**: Was the retrieved information relevant to the user's query?
+        
+        This helps ensure that:
+        1. Agents don't ignore tool results and make up information
+        2. Tool retrieval is working effectively  
+        3. Retrieved context is appropriate for the query
+        
+        Results are logged for monitoring and stored in state for analytics.
+        This is complementary to general quality checking, not a replacement.
         
         Args:
-            state: Current workflow state
+            state: Current workflow state with team_responses containing tool usage
             
         Returns:
-            Updated state with RAG quality results
+            Updated state with rag_grounded and rag_relevance_score metrics
         """
         if not self.quality_system or not self.enable_quality_gates:
             return state

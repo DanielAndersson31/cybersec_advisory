@@ -4,7 +4,7 @@ Keeps track of messages with a sliding window.
 """
 
 from typing import List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -14,7 +14,7 @@ class Message(BaseModel):
     """Simple message model."""
     role: str  # 'user' or 'assistant'
     content: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ConversationHistory:

@@ -1,7 +1,7 @@
-import utils.logging as setup_logging
+from utils.logging import setup_logging
 import logging
 
-
+# Initialize logging
 setup_logging()
 logger = logging.getLogger(__name__)
 

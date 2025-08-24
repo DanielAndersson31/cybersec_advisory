@@ -13,12 +13,12 @@ from workflow.state import WorkflowState
 from workflow.nodes import WorkflowNodes
 from workflow.fallbacks import ErrorHandler
 from agents.factory import AgentFactory
-from cybersec_mcp.cybersec_client import CybersecurityMCPClient
+# No longer need MCP client - using direct tools!
 from langchain_openai import ChatOpenAI
 from config.settings import settings
 from config.agent_config import AgentRole
-from .quality_gates import QualityGateSystem
-from .router import QueryRouter
+from workflow.quality_gates import QualityGateSystem
+from workflow.router import QueryRouter
 
 
 logger = logging.getLogger(__name__)
@@ -36,16 +36,15 @@ class CybersecurityTeamGraph:
         Args:
             enable_quality_checks: Whether to enable quality gates
         """
-        # Create shared clients
+        # Create shared LLM client
         llm_client = ChatOpenAI(
             model=settings.default_model,
             temperature=0.1,
             max_tokens=4000
         )
-        mcp_client = CybersecurityMCPClient()
 
-        # Create all agents using the factory
-        self.factory = AgentFactory(llm_client=llm_client, mcp_client=mcp_client)
+        # Create all agents using the factory (much simpler now!)
+        self.factory = AgentFactory(llm_client=llm_client)
         self.agents = self.factory.create_all_agents()
         self.coordinator = self.factory.create_agent(AgentRole.COORDINATOR)
         
@@ -53,8 +52,9 @@ class CybersecurityTeamGraph:
         self.nodes = WorkflowNodes(
             agents=self.agents,
             coordinator=self.coordinator,
-            router=QueryRouter(llm_client),
+            router=QueryRouter(llm_client),  # Much simpler now!
             quality_system=QualityGateSystem(llm_client),
+            llm_client=llm_client,  # Pass shared LLM client
             enable_quality_gates=enable_quality_checks
         )
         self.error_handler = ErrorHandler()
@@ -87,16 +87,16 @@ class CybersecurityTeamGraph:
     
     def _build_graph(self) -> StateGraph:
         """
-        Build the team collaboration graph.
+        Build the team collaboration graph with intelligent triage.
         
         Returns:
             Compiled state graph
         """
         workflow = StateGraph(WorkflowState)
         
-        # Add nodes
         workflow.add_node("analyze", self.nodes.analyze_query)
-        workflow.add_node("route", self.nodes.route_to_agents)
+        workflow.add_node("general_response", self.nodes.general_response)
+        workflow.add_node("direct_response", self.nodes.direct_response)
         workflow.add_node("consult_agent", self.nodes.consult_agent)
         workflow.add_node("coordinate", self.nodes.coordinate_responses)
         
@@ -107,18 +107,29 @@ class CybersecurityTeamGraph:
         
         # Define the flow
         workflow.set_entry_point("analyze")
-        workflow.add_edge("analyze", "route")
         
-        # This is the dynamic part: consult agents in parallel
+        # Direct routing from analysis (no separate triage step needed)
         workflow.add_conditional_edges(
-            "route",
-            self._should_consult,
+            "analyze",
+            self._route_by_strategy,
             {
-                "consult": "consult_agent",
-                "coordinate": "coordinate"
+                "direct": "direct_response",
+                "general_query": "general_response",
+                "single_agent": "consult_agent", 
+                "multi_agent": "consult_agent"
             }
         )
         
+        # Direct responses go straight to quality (if enabled) or end
+        if self.enable_quality_checks:
+            workflow.add_edge("direct_response", "quality")
+        else:
+            workflow.add_edge("direct_response", END)
+            
+        # General responses skip quality checks and go straight to end
+        workflow.add_edge("general_response", END)
+        
+        # Agent consultation goes to coordination
         workflow.add_edge("consult_agent", "coordinate")
         
         # Quality check flow if enabled
@@ -143,8 +154,25 @@ class CybersecurityTeamGraph:
 
 
 
+    def _route_by_strategy(self, state: WorkflowState) -> Literal["direct", "general_query", "single_agent", "multi_agent"]:
+        """Route based on triage strategy decision."""
+        strategy = state.get("response_strategy", "single_agent")
+        
+        if strategy == "direct":
+            logger.info("Routing to direct coordinator response (cybersecurity)")
+            return "direct"
+        elif strategy == "general_query":
+            logger.info("Routing to general assistant response")
+            return "general_query"
+        elif strategy == "single_agent":
+            logger.info(f"Routing to single agent: {state.get('agents_to_consult', [])}")
+            return "single_agent"
+        else:  # multi_agent
+            logger.info(f"Routing to multi-agent consultation: {state.get('agents_to_consult', [])}")
+            return "multi_agent"
+    
     def _should_consult(self, state: WorkflowState) -> Literal["consult", "coordinate"]:
-        """Decide whether to consult agents or go directly to synthesis."""
+        """Legacy method - kept for backward compatibility."""
         if state["agents_to_consult"]:
             logger.info(f"Proceeding to consult {len(state['agents_to_consult'])} agents in parallel.")
             return "consult"
@@ -197,6 +225,8 @@ class CybersecurityTeamGraph:
             initial_state = {
                 "query": query,
                 "thread_id": thread_id,
+                "response_strategy": None,
+                "estimated_complexity": None,
                 "messages": [],
                 "team_responses": [],
                 "agents_to_consult": [],

@@ -6,10 +6,10 @@ from typing import List
 from langchain_openai import ChatOpenAI
 from langfuse import observe
 from pydantic import ValidationError
-from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage
+from langchain_core.messages import BaseMessage, SystemMessage, ToolMessage, HumanMessage
 
 from config.agent_config import AgentRole, get_agent_config, get_agent_tools
-from cybersec_mcp.cybersec_client import CybersecurityMCPClient
+from cybersec_tools import CybersecurityToolkit
 from workflow.schemas import StructuredAgentResponse, ToolUsage
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,6 @@ class BaseSecurityAgent(ABC):
         self,
         role: AgentRole,
         llm_client: ChatOpenAI,
-        mcp_client: CybersecurityMCPClient,
     ):
         """
         Initializes the agent with its role and injected dependencies.
@@ -36,27 +35,43 @@ class BaseSecurityAgent(ABC):
         Args:
             role: The enum representing the agent's role (e.g., AgentRole.INCIDENT_RESPONSE).
             llm_client: An initialized ChatOpenAI client for language model calls.
-            mcp_client: An initialized client for executing cybersecurity tools.
         """
         self.role = role
         self.config = get_agent_config(role)
         
-        # Store the base LLM and MCP client
+        # Store the base LLM and initialize toolkit
         self.base_llm = llm_client
-        self.mcp_client = mcp_client
+        self.toolkit = CybersecurityToolkit()
 
         # Core properties loaded from the configuration file.
         self.name: str = self.config["name"]
         self.model: str = self.config["model"]
         self.temperature: float = self.config.get("temperature", 0.1)
         self.max_tokens: int = self.config.get("max_tokens", 4000) # Increased for structured output
-
-        # Get LangChain tools from MCP client and bind to LLM
-        available_tools = self.mcp_client.get_langchain_tools()
         
-        # Filter tools based on agent permissions (from config)
-        permitted_tool_names = [tool["function"]["name"] for tool in get_agent_tools(self.role)]
-        self.tools = [tool for tool in available_tools if tool.name in permitted_tool_names]
+        # Set up structured output LLM using LangChain's native capabilities
+        self.structured_llm = llm_client.with_structured_output(StructuredAgentResponse)
+
+        # Get tools directly from toolkit - much simpler!
+        role_category = {
+            AgentRole.INCIDENT_RESPONSE: "incident_response",
+            AgentRole.THREAT_INTEL: "threat_intel", 
+            AgentRole.PREVENTION: "prevention",
+            AgentRole.COMPLIANCE: "compliance"
+        }.get(role, "general")
+        
+        # Get role-specific tools plus general tools
+        role_tools = self.toolkit.get_tools_by_category(role_category)
+        general_tools = self.toolkit.get_tools_by_category("general")
+        
+        # Remove duplicates by tool name (StructuredTool objects aren't hashable)
+        all_tools = role_tools + general_tools
+        seen_names = set()
+        self.tools = []
+        for tool in all_tools:
+            if tool.name not in seen_names:
+                self.tools.append(tool)
+                seen_names.add(tool.name)
         
         # Create LLM with tools bound
         self.llm = self.base_llm.bind_tools(self.tools) if self.tools else self.base_llm
@@ -116,12 +131,12 @@ class BaseSecurityAgent(ABC):
                     for tool in self.tools:
                         if tool.name == tool_name:
                             try:
+                                # Direct tool invocation - no special handling needed
                                 tool_result = await tool.ainvoke(tool_args)
                                 
                                 # Track tool usage
                                 tool_usage_list.append(ToolUsage(
                                     tool_name=tool_name,
-                                    tool_args=tool_args,
                                     tool_result=tool_result
                                 ))
                                 break
@@ -132,7 +147,6 @@ class BaseSecurityAgent(ABC):
                                 # Track failed tool usage
                                 tool_usage_list.append(ToolUsage(
                                     tool_name=tool_name,
-                                    tool_args=tool_args,
                                     tool_result=tool_result
                                 ))
                     
@@ -145,25 +159,41 @@ class BaseSecurityAgent(ABC):
                 # Get final response with tool results
                 response = await self.llm.ainvoke(messages_with_system)
 
-            # Step 3: Generate structured output from the final response
-            structured_llm = self.base_llm.with_structured_output(StructuredAgentResponse)
+            # Step 3: Generate structured output using instructor
+            # Prepare conversation history for structured generation
+            conversation_history = ""
+            for msg in (messages_with_system + [response])[-4:]:  # Use last few messages for context
+                if hasattr(msg, 'content'):
+                    role_name = getattr(msg, '__class__', type(msg)).__name__
+                    conversation_history += f"\n{role_name}: {msg.content}\n"
             
-            # Create a prompt that includes the conversation and asks for structured output
-            final_messages = messages_with_system + [response] if response.tool_calls else messages_with_system + [response]
-            
-            # Add instruction for structured output
-            structured_prompt = SystemMessage(content=f"""
+            structured_prompt = f"""
 Based on the conversation above, provide a structured response as {self.name}.
+
+Conversation History:
+{conversation_history}
+
 Include:
 - A clear summary of your analysis
-- Specific actionable recommendations
+- Specific actionable recommendations  
 - A confidence score (0.0-1.0) based on the available information
 - Any handoff requests if other specialists should be involved
 
-Format your response according to the StructuredAgentResponse schema.
-""")
+Provide a comprehensive response following the StructuredAgentResponse schema.
+"""
             
-            structured_response = await structured_llm.ainvoke([structured_prompt] + final_messages[-3:])  # Use last few messages for context
+            # Retry logic with LangChain structured output
+            for attempt in range(3):
+                try:
+                    structured_response = await self.structured_llm.ainvoke([
+                        SystemMessage(content=f"You are {self.name}. Provide structured analysis responses."),
+                        HumanMessage(content=structured_prompt)
+                    ])
+                    break
+                except Exception as e:
+                    if attempt == 2:  # Last attempt
+                        raise e
+                    logger.warning(f"Structured response attempt {attempt + 1} failed for {self.name}: {e}, retrying...")
             
             # Add tool usage to the response
             structured_response.tools_used = tool_usage_list
@@ -172,19 +202,19 @@ Format your response according to the StructuredAgentResponse schema.
             return structured_response
 
         except ValidationError as e:
-            logger.error(f"Agent {self.name} failed validation: {e}", exc_info=True)
+            logger.error(f"Agent {self.name} failed validation after LangChain retries: {e}", exc_info=True)
             return StructuredAgentResponse(
-                summary=f"My response failed validation. Please review the error: {e}",
-                recommendations=[],
+                summary=f"My response failed validation after retries. Please review the error: {str(e)[:200]}",
+                recommendations=["Please rephrase your query or try a simpler request"],
                 confidence_score=0.1,
                 handoff_request=None,
                 tools_used=tool_usage_list
             )
         except Exception as e:
-            logger.error(f"Agent {self.name} encountered an error: {e}", exc_info=True)
+            logger.error(f"Agent {self.name} encountered an error after LangChain retries: {e}", exc_info=True)
             return StructuredAgentResponse(
-                summary=f"An unexpected error occurred: {e}",
-                recommendations=[],
+                summary=f"An unexpected error occurred: {str(e)[:200]}",
+                recommendations=["Please try your request again or contact support"],
                 confidence_score=0.0,
                 handoff_request=None,
                 tools_used=tool_usage_list

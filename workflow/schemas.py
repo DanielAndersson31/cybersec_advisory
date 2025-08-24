@@ -1,15 +1,14 @@
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from config.agent_config import AgentRole
-from datetime import datetime
+from datetime import datetime, timezone
 
 class ToolUsage(BaseModel):
     """Represents a tool that was used by an agent during analysis."""
     tool_name: str = Field(..., description="The name of the tool that was used.")
-    tool_args: Dict[str, Any] = Field(..., description="The arguments passed to the tool.")
     tool_result: str = Field(..., description="The result returned by the tool.")
     timestamp: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="When the tool was executed."
     )
 
@@ -48,10 +47,11 @@ class TeamResponse(BaseModel):
     response: StructuredAgentResponse = Field(..., description="The structured response from the agent.")
     tools_used: List[Dict[str, Any]] = Field(
         default_factory=list,
-        description="A list of tools used by the agent during its analysis."
+        description="A list of tools used by the agent during its analysis.",
+        json_schema_extra={"additionalProperties": False}
     )
     timestamp: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="The timestamp of when the response was generated."
     )
 
@@ -72,16 +72,30 @@ class RAGGroundednessResult(BaseModel):
     grounded: bool = Field(description="Whether the answer is grounded in the provided context.")
     feedback: str = Field(description="Detailed feedback on the groundedness.")
 
+class CybersecurityClassification(BaseModel):
+    """Classification result for cybersecurity queries."""
+    is_cybersecurity_related: bool = Field(description="Whether the query is cybersecurity-related")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence score between 0 and 1")
+    reasoning: str = Field(max_length=200, description="Brief explanation of the classification")
+
 class RoutingDecision(BaseModel):
     """The routing decision for a query."""
-    relevant_agents: List[AgentRole] = Field(
+    response_strategy: str = Field(
         ...,
+        description="Response strategy: 'direct', 'single_agent', 'multi_agent', 'general_query'"
+    )
+    relevant_agents: List[AgentRole] = Field(
+        default_factory=list,
         description="A list of agent roles that are most relevant to handle the query."
     )
     reasoning: str = Field(
         ...,
         max_length=500,
         description="A brief explanation for the routing decision."
+    )
+    estimated_complexity: str = Field(
+        ...,
+        description="Complexity level: 'simple', 'moderate', 'complex'"
     )
 
 class FinalReport(BaseModel):

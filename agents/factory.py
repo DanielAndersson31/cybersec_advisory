@@ -7,7 +7,7 @@ from langchain_openai import ChatOpenAI
 
 # Use the centralized config package for all configuration needs.
 from config.agent_config import AgentRole, get_enabled_agents
-from cybersec_mcp.cybersec_client import CybersecurityMCPClient
+# No longer need MCP client - using direct tools!
 
 # Import the base and all specialist agent classes
 from agents.base_agent import BaseSecurityAgent
@@ -23,10 +23,9 @@ logger = logging.getLogger(__name__)
 class AgentFactory:
     """Dependency injection and agent creation"""
 
-    def __init__(self, llm_client: ChatOpenAI, mcp_client: CybersecurityMCPClient):
-        """Initialize the factory with shared clients."""
+    def __init__(self, llm_client: ChatOpenAI):
+        """Initialize the factory with shared LLM client."""
         self.llm_client = llm_client
-        self.mcp_client = mcp_client
         self.agent_map = {
             AgentRole.INCIDENT_RESPONSE: IncidentResponseAgent,
             AgentRole.PREVENTION: PreventionAgent,
@@ -40,7 +39,7 @@ class AgentFactory:
         if role in self.agent_map:
             AgentClass = self.agent_map[role]
             try:
-                agent_instance = AgentClass(llm_client=self.llm_client, mcp_client=self.mcp_client)
+                agent_instance = AgentClass(llm_client=self.llm_client)
                 logger.info(f"Successfully created agent: {agent_instance.name}")
                 return agent_instance
             except Exception as e:

@@ -1,12 +1,14 @@
 import logging
 from typing import List
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse import observe, get_client
 from pydantic import ValidationError
 
 from config.langfuse_settings import langfuse_config
 from workflow.schemas import QualityGateResult, RAGRelevanceResult, RAGGroundednessResult
+
+logger = logging.getLogger(__name__)
 
 
 class QualityGateSystem:
@@ -17,9 +19,13 @@ class QualityGateSystem:
     """
 
     def __init__(self, llm_client: ChatOpenAI):
-        """Initializes the Quality Gate System."""
+        """Initializes the Quality Gate System with LangChain structured outputs."""
         self.evaluator_llm = llm_client
         self.langfuse = langfuse_config.client if langfuse_config.client else get_client()
+        
+        self.quality_llm = llm_client.with_structured_output(QualityGateResult)
+        self.groundedness_llm = llm_client.with_structured_output(RAGGroundednessResult)
+        self.relevance_llm = llm_client.with_structured_output(RAGRelevanceResult)
 
     @observe()
     async def validate_response(self, query: str, response: str, agent_type: str) -> QualityGateResult:
@@ -51,8 +57,18 @@ Be thorough and critical. Specifically, assess the response for technical accura
 Return your evaluation in the required structured format.
 """
         try:
-            structured_llm = self.evaluator_llm.with_structured_output(QualityGateResult)
-            result = await structured_llm.ainvoke([HumanMessage(content=evaluation_prompt)])
+            # Retry logic with LangChain structured output
+            for attempt in range(2):
+                try:
+                    result = await self.quality_llm.ainvoke([
+                        SystemMessage(content="You are an expert cybersecurity evaluator. Provide structured quality assessments."),
+                        HumanMessage(content=evaluation_prompt)
+                    ])
+                    break
+                except Exception as e:
+                    if attempt == 1:  # Last attempt
+                        raise e
+                    logger.warning(f"Quality validation attempt {attempt + 1} failed: {e}, retrying...")
 
             langfuse.score_current_span(
                 name=f"{agent_type}_quality_score",
@@ -62,13 +78,13 @@ Return your evaluation in the required structured format.
 
             return result
 
-        except (ValidationError, Exception) as e:
-            logging.error(f"Error during quality validation for {agent_type}: {e}")
+        except Exception as e:
+            logging.error(f"Error during quality validation for {agent_type} after LangChain retries: {e}")
             langfuse.score_current_span(name="quality_gate_execution_error", value=0, comment=str(e))
             return QualityGateResult(
                 passed=True,  # Pass gracefully to not block the workflow
                 overall_score=5.0,
-                feedback=f"Quality evaluation could not be performed due to an error: {e}"
+                feedback=f"Quality evaluation could not be performed after retries: {str(e)[:200]}"
             )
 
     @observe()
@@ -99,8 +115,8 @@ You are an expert cybersecurity advisor tasked with improving a team member's wo
 Provide only the improved, final response.
 """
         try:
-            enhanced = await self.evaluator_llm.ainvoke([HumanMessage(content=enhancement_prompt)])
-            enhanced_content = enhanced.content
+            enhanced_response = await self.evaluator_llm.ainvoke([HumanMessage(content=enhancement_prompt)])
+            enhanced_content = enhanced_response.content
             langfuse.score_current_span(name="response_enhancement_successful", value=1.0, comment="Response was successfully enhanced.")
             return enhanced_content
         
@@ -131,8 +147,18 @@ Compare the statement against the context. The statement must be directly and ex
 Provide your assessment in the required structured format.
 """
         try:
-            structured_llm = self.evaluator_llm.with_structured_output(RAGGroundednessResult)
-            result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
+            # Retry logic with LangChain structured output
+            for attempt in range(2):
+                try:
+                    result = await self.groundedness_llm.ainvoke([
+                        SystemMessage(content="You are an expert at evaluating whether responses are grounded in provided context."),
+                        HumanMessage(content=prompt)
+                    ])
+                    break
+                except Exception as e:
+                    if attempt == 1:  # Last attempt
+                        raise e
+                    logger.warning(f"Groundedness evaluation attempt {attempt + 1} failed: {e}, retrying...")
             
             langfuse.score_current_span(
                 name="rag_groundedness",
@@ -167,8 +193,18 @@ Evaluate how relevant the context is for forming a comprehensive answer to the u
 Provide your assessment in the required structured format.
 """
         try:
-            structured_llm = self.evaluator_llm.with_structured_output(RAGRelevanceResult)
-            result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
+            # Retry logic with LangChain structured output
+            for attempt in range(2):
+                try:
+                    result = await self.relevance_llm.ainvoke([
+                        SystemMessage(content="You are an expert at evaluating the relevance of retrieved context to user queries."),
+                        HumanMessage(content=prompt)
+                    ])
+                    break
+                except Exception as e:
+                    if attempt == 1:  # Last attempt
+                        raise e
+                    logger.warning(f"Relevance evaluation attempt {attempt + 1} failed: {e}, retrying...")
             
             langfuse.score_current_span(
                 name="rag_relevance",

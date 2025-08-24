@@ -55,34 +55,25 @@ mcp.metadata = {
 @mcp.tool()
 async def search_web(
     query: str,
-    max_results: int = 10,
-    search_type: str = "general",
-    include_domains: Optional[List[str]] = None,
-    time_range: Optional[str] = None
+    max_results: int = 10
 ) -> Dict[str, Any]:
     """
-    Search the web for cybersecurity information with enhanced querying.
+    Search the web with LLM-enhanced query optimization for better results.
     
     Args:
-        query: Search query string
+        query: Search query string (will be enhanced by LLM for optimal results)
         max_results: Maximum number of results to return (default: 10)
-        search_type: Type of search - "general", "news", or "research" (default: "general")
-        include_domains: List of specific domains to search within
-        time_range: Filter by time - 'd' (day), 'w' (week), 'm' (month), 'y' (year)
     
     Returns:
-        Dict containing search results with status, query, and results list
+        Dict containing search results with status, query, enhanced_query, and results list
     """
     try:
-        logger.info(f"Web search: {query} (type: {search_type})")
+        logger.info(f"Web search with LLM enhancement: {query}")
         result = await web_search_tool_instance.search(
             query=query,
-            max_results=max_results,
-            search_type=search_type,
-            include_domains=include_domains,
-            time_range=time_range
+            max_results=max_results
         )
-        logger.info(f"Web search completed: {result.get('total_results', 0)} results")
+        logger.info(f"Web search completed: {result.total_results} results for enhanced query")
         return result.model_dump()
     except Exception as e:
         logger.error(f"Web search error for query '{query}': {str(e)}")
@@ -90,7 +81,9 @@ async def search_web(
             "status": "error",
             "error": str(e),
             "query": query,
-            "results": []
+            "enhanced_query": query,
+            "results": [],
+            "total_results": 0
         }
 
 
