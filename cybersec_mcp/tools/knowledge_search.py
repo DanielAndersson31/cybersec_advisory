@@ -64,7 +64,10 @@ class KnowledgeSearchTool:
 
             if not domains_to_search:
                 return KnowledgeSearchResponse(
-                    status="error", query=query, results=[], error="No knowledge domains found to search."
+                    status="info", 
+                    query=query, 
+                    results=[], 
+                    error="Knowledge base not yet populated. No collections available to search."
                 )
 
             # Concurrently search all specified domains
@@ -88,10 +91,16 @@ class KnowledgeSearchTool:
             # Format results into our Pydantic model
             formatted_results = [KnowledgeResult(**result) for result in top_results]
 
+            # Provide helpful status based on results
+            status = "success" if formatted_results else "no_results"
+            error_msg = None if formatted_results else "No relevant documents found in knowledge base. Consider using web search for current information."
+
             return KnowledgeSearchResponse(
+                status=status,
                 query=query,
                 domain_searched=domain if domain else "all",
                 results=formatted_results,
+                error=error_msg
             )
 
         except Exception as e:

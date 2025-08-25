@@ -1,9 +1,9 @@
 """
-Simple conversation history management.
-Keeps track of messages with a sliding window.
+Enhanced conversation history management with metadata tracking.
+Keeps track of messages with a sliding window and conversation metrics.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
@@ -11,37 +11,89 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 
 class Message(BaseModel):
-    """Simple message model."""
+    """Enhanced message model with metadata tracking."""
     role: str  # 'user' or 'assistant'
     content: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    # Metadata tracking
+    agent_used: Optional[str] = None  # Which agent responded
+    tools_used: List[str] = Field(default_factory=list)  # Which tools were called
+    confidence_score: Optional[float] = None
+    processing_time: Optional[float] = None
+    message_id: str = Field(default_factory=lambda: f"msg_{datetime.now().timestamp()}")
+    
+    # Context preservation flags
+    is_important: bool = False  # Should be preserved during context truncation
+    contains_entities: List[str] = Field(default_factory=list)  # Named entities mentioned
 
 
 class ConversationHistory:
     """
-    Simple conversation history with sliding window.
-    This is just a helper for local context, LangGraph handles persistence.
+    Enhanced conversation history with intelligent sliding window and metadata tracking.
+    This is a helper for local context, LangGraph handles persistence.
     """
     
     def __init__(self, max_messages: int = 20):
         """Initialize history."""
         self.messages: List[Message] = []
         self.max_messages = max_messages
+        self.conversation_start = datetime.now(timezone.utc)
+        self.total_messages = 0
+        self.topics_discussed: List[str] = []
     
-    def add_user_message(self, content: str):
-        """Add a user message."""
-        self.messages.append(Message(role="user", content=content))
+    def add_user_message(self, content: str, entities: List[str] = None):
+        """Add a user message with optional entity tracking."""
+        message = Message(
+            role="user", 
+            content=content,
+            contains_entities=entities or []
+        )
+        self.messages.append(message)
+        self.total_messages += 1
         self._trim_history()
+        return message.message_id
     
-    def add_assistant_message(self, content: str):
-        """Add an assistant message."""
-        self.messages.append(Message(role="assistant", content=content))
+    def add_assistant_message(
+        self, 
+        content: str, 
+        agent_used: str = None,
+        tools_used: List[str] = None,
+        confidence_score: float = None,
+        processing_time: float = None
+    ):
+        """Add an assistant message with metadata."""
+        message = Message(
+            role="assistant", 
+            content=content,
+            agent_used=agent_used,
+            tools_used=tools_used or [],
+            confidence_score=confidence_score,
+            processing_time=processing_time
+        )
+        self.messages.append(message)
+        self.total_messages += 1
         self._trim_history()
+        return message.message_id
     
     def _trim_history(self):
-        """Keep only recent messages."""
+        """Intelligent message trimming preserving important context."""
         if len(self.messages) > self.max_messages:
-            self.messages = self.messages[-self.max_messages:]
+            # Preserve important messages and recent messages
+            important_messages = [msg for msg in self.messages if msg.is_important]
+            
+            # Calculate how many recent messages we can keep
+            recent_count = self.max_messages - len(important_messages)
+            if recent_count > 0:
+                # Get recent messages that aren't already marked important
+                recent_messages = [
+                    msg for msg in self.messages[-recent_count:] 
+                    if not msg.is_important
+                ]
+                self.messages = important_messages + recent_messages
+            else:
+                # If too many important messages, keep the most recent important ones
+                self.messages = important_messages[-self.max_messages:]
     
     def get_langchain_messages(self) -> List:
         """Convert to LangChain format for workflow."""
@@ -53,6 +105,28 @@ class ConversationHistory:
                 langchain_messages.append(AIMessage(content=msg.content))
         return langchain_messages
     
+    def mark_message_important(self, message_id: str):
+        """Mark a message as important for context preservation."""
+        for msg in self.messages:
+            if msg.message_id == message_id:
+                msg.is_important = True
+                break
+    
+    def get_conversation_summary(self) -> Dict[str, Any]:
+        """Get conversation statistics and summary."""
+        return {
+            "total_messages": self.total_messages,
+            "current_length": len(self.messages),
+            "conversation_duration": (datetime.now(timezone.utc) - self.conversation_start).total_seconds(),
+            "agents_used": list(set(msg.agent_used for msg in self.messages if msg.agent_used)),
+            "tools_used": list(set(tool for msg in self.messages for tool in msg.tools_used)),
+            "topics_discussed": self.topics_discussed,
+            "avg_confidence": sum(msg.confidence_score for msg in self.messages if msg.confidence_score) / max(1, len([msg for msg in self.messages if msg.confidence_score])),
+        }
+    
     def clear(self):
-        """Clear history."""
+        """Clear history and reset metadata."""
         self.messages.clear()
+        self.conversation_start = datetime.now(timezone.utc)
+        self.total_messages = 0
+        self.topics_discussed.clear()

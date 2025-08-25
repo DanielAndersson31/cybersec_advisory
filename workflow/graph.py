@@ -4,10 +4,12 @@ Orchestrates how agents collaborate to answer queries.
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from langgraph.graph import StateGraph, END
 from langfuse import observe
+from langchain_core.messages import AIMessage
 
 from workflow.state import WorkflowState
 from workflow.nodes import WorkflowNodes
@@ -129,8 +131,15 @@ class CybersecurityTeamGraph:
         # General responses skip quality checks and go straight to end
         workflow.add_edge("general_response", END)
         
-        # Agent consultation goes to coordination
-        workflow.add_edge("consult_agent", "coordinate")
+        # Agent consultation routing - conditional based on single vs multi-agent
+        workflow.add_conditional_edges(
+            "consult_agent",
+            self._route_after_consultation,
+            {
+                "single_response": "quality" if self.enable_quality_checks else END,
+                "coordinate": "coordinate"
+            }
+        )
         
         # Quality check flow if enabled
         if self.enable_quality_checks:
@@ -171,6 +180,39 @@ class CybersecurityTeamGraph:
             logger.info(f"Routing to multi-agent consultation: {state.get('agents_to_consult', [])}")
             return "multi_agent"
     
+    def _route_after_consultation(self, state: WorkflowState) -> Literal["single_response", "coordinate"]:
+        """
+        Route after agent consultation based on whether single or multi-agent response.
+        Single agent responses can skip coordinator synthesis for efficiency.
+        """
+        team_responses = state.get("team_responses", [])
+        needs_consensus = state.get("needs_consensus", False)
+        
+        # If only one agent responded and consensus isn't needed, use direct response
+        if len(team_responses) == 1 and not needs_consensus:
+            agent_name = team_responses[0].agent_name
+            confidence = team_responses[0].response.confidence_score
+            logger.info(f"Single agent response from {agent_name} (confidence: {confidence:.2f}) - skipping coordinator")
+            
+            # Format the single response directly in state
+            response = team_responses[0].response
+            final_answer = f"**{team_responses[0].agent_name}'s Analysis:**\n\n"
+            final_answer += f"**Summary:**\n{response.summary}\n\n"
+            if response.recommendations:
+                final_answer += "**Recommendations:**\n"
+                for rec in response.recommendations:
+                    final_answer += f"- {rec}\n"
+            
+            state["final_answer"] = final_answer
+            state["messages"].append(AIMessage(content=final_answer))
+            state["completed_at"] = datetime.now(timezone.utc)
+            
+            return "single_response"
+        else:
+            # Multiple agents or consensus needed - use coordinator
+            logger.info(f"Multiple agents ({len(team_responses)}) or consensus needed - routing to coordinator")
+            return "coordinate"
+
     def _should_consult(self, state: WorkflowState) -> Literal["consult", "coordinate"]:
         """Legacy method - kept for backward compatibility."""
         if state["agents_to_consult"]:

@@ -57,12 +57,13 @@ Guidelines:
 - Add relevant keywords that would help find better results
 - Remove unnecessary words and filler
 - For technical topics, include proper terminology
-- For current events, add temporal keywords if relevant
+- For current/latest information, use "current", "latest", "recent", "today" - NEVER add specific years unless the user explicitly asks for historical data
 - For locations, include geographic specifics if helpful
+- Preserve the user's intent - don't change the meaning
 
 Examples:
 User: "What's the weather like in London?"
-Enhanced: "London weather today current conditions"
+Enhanced: "London weather current conditions today"
 
 User: "How to install Docker?"
 Enhanced: "Docker installation guide setup tutorial"
@@ -71,7 +72,15 @@ User: "NIST framework"
 Enhanced: "NIST Cybersecurity Framework guide implementation"
 
 User: "Latest ransomware attack"
-Enhanced: "ransomware attack 2024 latest cybersecurity news"
+Enhanced: "latest ransomware attack cybersecurity news recent"
+
+User: "current day and date"
+Enhanced: "current date today"
+
+User: "DDoS prevention strategies"
+Enhanced: "DDoS attack prevention strategies latest methods"
+
+IMPORTANT: Never add specific years (like 2023, 2024) unless the user specifically asks for historical information from a particular year.
 
 Return ONLY the enhanced search query, nothing else."""
                 },

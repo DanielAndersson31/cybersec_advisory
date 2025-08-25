@@ -59,6 +59,14 @@ class VectorStoreManager:
         except Exception as e:
             logger.exception(f"Failed to retrieve collection names: {e}")
             return []
+            
+    def collection_exists(self, collection_name: str) -> bool:
+        """Check if a collection exists in the database."""
+        try:
+            self.client.get_collection(collection_name=collection_name)
+            return True
+        except Exception:
+            return False
 
     def create_collection_if_not_exists(self, collection_name: str):
         """
@@ -171,6 +179,11 @@ class VectorStoreManager:
         Returns:
             A list of search results with content, metadata, and score
         """
+        # Check if collection exists first
+        if not self.collection_exists(collection_name):
+            logger.info(f"Collection '{collection_name}' does not exist - knowledge base may not be populated yet")
+            return []
+        
         try:
             # Use query prefix for BGE models (critical for performance!)
             query_with_prefix = f"query: {query}"
@@ -207,8 +220,14 @@ class VectorStoreManager:
             return formatted_results
             
         except Exception as e:
-            logger.exception(f"Search failed in collection '{collection_name}': {e}")
-            return []
+            # Handle missing collection gracefully
+            if "doesn't exist" in str(e) or "Not found" in str(e):
+                logger.info(f"Collection '{collection_name}' not found - knowledge base may not be populated yet")
+                return []
+            else:
+                # Log other errors with full details
+                logger.exception(f"Search failed in collection '{collection_name}': {e}")
+                return []
 
     async def search_multiple_collections(
         self,

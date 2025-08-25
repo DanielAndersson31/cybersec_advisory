@@ -1,13 +1,17 @@
-"""Conversation management with LangGraph checkpointing."""
+"""Enhanced conversation management with LangGraph checkpointing, retry logic, and LLM-powered features."""
 
 from conversation.manager import ConversationManager
-from conversation.history import ConversationHistory
+from conversation.history import ConversationHistory, Message
 from conversation.state_store import ConversationStateStore
 from conversation.summarizer import ConversationSummarizer
+from conversation.config import ConversationConfig, conversation_config
 
 __all__ = [
     "ConversationManager",
-    "ConversationHistory",
+    "ConversationHistory", 
+    "Message",
     "ConversationStateStore",
-    "ConversationSummarizer"
+    "ConversationSummarizer",
+    "ConversationConfig",
+    "conversation_config"
 ]

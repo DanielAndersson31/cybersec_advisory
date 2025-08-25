@@ -46,20 +46,29 @@ cli_app = typer.Typer()
 
 async def initialize_system():
     """
-    Initializes all necessary components for the advisory system.
+    Initializes all necessary components for the advisory system with enhanced conversation features.
     """
-    logger.info("🚀 Initializing Cybersecurity Advisory System...")
-    console.print("[bold green]Initializing Cybersecurity Advisory System...[/bold green]")
+    logger.info("🚀 Initializing Enhanced Cybersecurity Advisory System...")
+    console.print("[bold green]Initializing Enhanced Cybersecurity Advisory System...[/bold green]")
     
     # 1. Initialize the workflow graph (which now handles its own clients)
     workflow = CybersecurityTeamGraph()
     
-    # 2. Initialize the conversation manager
-    manager = ConversationManager(workflow=workflow)
+    # 2. Create shared LLM client for conversation features
+    from langchain_openai import ChatOpenAI
+    from config.settings import settings
+    llm_client = ChatOpenAI(
+        model=settings.default_model,
+        temperature=0.1,
+        max_tokens=4000
+    )
+    
+    # 3. Initialize the enhanced conversation manager with LLM support
+    manager = ConversationManager(workflow=workflow, llm_client=llm_client)
     await manager.initialize() # Async initialization
     
-    logger.info("✅ System initialized successfully")
-    console.print("[bold green]System initialized successfully.[/bold green]")
+    logger.info("✅ Enhanced system initialized successfully")
+    console.print("[bold green]Enhanced system initialized with LLM-powered conversation features.[/bold green]")
     return manager
 
 @cli_app.command()
