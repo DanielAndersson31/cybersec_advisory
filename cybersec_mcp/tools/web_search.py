@@ -2,8 +2,8 @@
 Web search tool using Tavily API with LLM-enhanced query optimization.
 """
 
-from typing import Dict, Any, List, Optional
-from pydantic import BaseModel, Field, ValidationError
+from typing import List, Optional
+from pydantic import BaseModel, Field, ValidationError, ConfigDict
 from tavily import AsyncTavilyClient
 import logging
 from config.settings import settings
@@ -39,8 +39,13 @@ class WebSearchTool(BaseTool):
     """Web search tool with LLM-enhanced query optimization."""
     name: str = "web_search"
     description: str = "Search the web with LLM-enhanced query optimization for better results."
+    tavily: AsyncTavilyClient = None
+    instructor: AsyncOpenAI = None
 
-    def __init__(self, llm_client: AsyncOpenAI):
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
+
+    def __init__(self, llm_client: AsyncOpenAI, **data):
+        super().__init__(**data)
         """Initialize Tavily and Instructor clients."""
         self.tavily = AsyncTavilyClient(api_key=settings.get_secret("tavily_api_key"))
         self.instructor = instructor.patch(llm_client)

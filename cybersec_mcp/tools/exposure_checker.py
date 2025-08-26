@@ -5,7 +5,7 @@ Tool to check for email exposure using XposedOrNot API.
 import logging
 from typing import List, Optional
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from langchain_core.tools import BaseTool
 import asyncio
 
@@ -35,11 +35,14 @@ class ExposureCheckerTool(BaseTool):
     """
     name: str = "exposure_checker"
     description: str = "Check if an email address has been exposed in data breaches."
+    base_url: str = "https://api.xposedornot.com/v1"
+    client: httpx.AsyncClient = None
+
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
 
     def __init__(self, **data):
         super().__init__(**data)
         """Initialize the XposedOrNot client."""
-        self.base_url = "https://api.xposedornot.com/v1"
         self.client = httpx.AsyncClient(timeout=30.0)
         logger.info("ExposureCheckerTool initialized, using XposedOrNot API.")
 

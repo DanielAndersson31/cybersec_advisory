@@ -7,6 +7,16 @@ from pydantic import ValidationError
 
 from config.langfuse_settings import langfuse_config
 from workflow.schemas import QualityGateResult, RAGRelevanceResult, RAGGroundednessResult
+from config.evaluation_prompts import (
+    EVALUATOR_SYSTEM_PERSONA,
+    GROUNDEDNESS_SYSTEM_PERSONA,
+    RELEVANCE_SYSTEM_PERSONA,
+    ENHANCER_SYSTEM_PERSONA,
+    VALIDATE_RESPONSE_PROMPT,
+    ENHANCE_RESPONSE_PROMPT,
+    CHECK_GROUNDEDNESS_PROMPT,
+    CHECK_RELEVANCE_PROMPT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,68 +33,57 @@ class QualityGateSystem:
         self.evaluator_llm = llm_client
         self.langfuse = langfuse_config.client if langfuse_config.client else get_client()
         
-        self.quality_llm = llm_client.with_structured_output(QualityGateResult)
-        self.groundedness_llm = llm_client.with_structured_output(RAGGroundednessResult)
-        self.relevance_llm = llm_client.with_structured_output(RAGRelevanceResult)
+        # These runnables now handle parsing and retries internally
+        self.quality_llm = self.evaluator_llm.with_structured_output(QualityGateResult)
+        self.groundedness_llm = self.evaluator_llm.with_structured_output(RAGGroundednessResult)
+        self.relevance_llm = self.evaluator_llm.with_structured_output(RAGRelevanceResult)
+
 
     @observe()
-    async def validate_response(self, query: str, response: str, agent_type: str) -> QualityGateResult:
+    async def validate_response(
+        self, query: str, response: str, agent_type: str, fail_open: bool = True
+    ) -> QualityGateResult:
         """Validates an agent's response using a detailed, LLM-based evaluation."""
         langfuse = get_client()
+        
+        # Log the exact input being sent to the quality gate for debugging
+        logger.info(f"--- Validating Response for Quality ---\nQuery: {query}\nResponse: {response}\nAgent Type: {agent_type}\n------------------------------------")
         
         if not self.langfuse:
             return QualityGateResult(passed=True, overall_score=10.0, feedback="Langfuse offline.")
 
         evaluator_config = langfuse_config.create_agent_evaluator(agent_type)
-        evaluation_prompt = f"""
-You are an expert cybersecurity evaluator. Your task is to evaluate the following response with strict objectivity.
-
-**Original Query:**
-{query}
-
-**Agent Type:**
-{agent_type}
-
-**Agent Response to Evaluate:**
-{response}
-
----
-**Evaluation Criteria:**
-{evaluator_config['prompt']}
-
-**Instructions:**
-Be thorough and critical. Specifically, assess the response for technical accuracy, completeness, actionability, and appropriate tone.
-Return your evaluation in the required structured format.
-"""
+        evaluation_prompt = VALIDATE_RESPONSE_PROMPT.format(
+            query=query,
+            response=response,
+            agent_type=agent_type,
+            evaluation_criteria=evaluator_config['prompt']
+        )
+        
         try:
-            # Retry logic with LangChain structured output
-            for attempt in range(2):
-                try:
-                    result = await self.quality_llm.ainvoke([
-                        SystemMessage(content="You are an expert cybersecurity evaluator. Provide structured quality assessments."),
-                        HumanMessage(content=evaluation_prompt)
-                    ])
-                    break
-                except Exception as e:
-                    if attempt == 1:  # Last attempt
-                        raise e
-                    logger.warning(f"Quality validation attempt {attempt + 1} failed: {e}, retrying...")
+            # The with_structured_output runnable handles parsing and retries.
+            evaluation_message = [
+                SystemMessage(content=EVALUATOR_SYSTEM_PERSONA),
+                HumanMessage(content=evaluation_prompt)
+            ]
+            result = await self.quality_llm.ainvoke(evaluation_message)
 
             langfuse.score_current_span(
                 name=f"{agent_type}_quality_score",
                 value=result.overall_score,
                 comment=result.feedback
             )
-
+            langfuse.score_current_span(name="quality_gate_succeeded", value=1)
             return result
 
         except Exception as e:
-            logging.error(f"Error during quality validation for {agent_type} after LangChain retries: {e}")
-            langfuse.score_current_span(name="quality_gate_execution_error", value=0, comment=str(e))
+            logging.error(f"Error during quality validation for {agent_type}: {e}")
+            langfuse.score_current_span(name="quality_gate_execution_error", value=1, comment=str(e))
+            langfuse.score_current_span(name="quality_gate_succeeded", value=0)
             return QualityGateResult(
-                passed=True,  # Pass gracefully to not block the workflow
-                overall_score=5.0,
-                feedback=f"Quality evaluation could not be performed after retries: {str(e)[:200]}"
+                passed=fail_open,
+                overall_score=0.0,
+                feedback=f"Quality evaluation could not be performed: {str(e)[:200]}"
             )
 
     @observe()
@@ -92,30 +91,17 @@ Return your evaluation in the required structured format.
         """Improves a response that failed the quality gate, based on specific feedback."""
         langfuse = get_client()
         
-        enhancement_prompt = f"""
-You are an expert cybersecurity advisor tasked with improving a team member's work. Improve the following response based on the specific quality issues identified.
-
-**Original Query:**
-{query}
-
-**Original Response (needs improvement):**
-{response}
-
----
-**Quality Issues to Address:**
-{feedback}
-
----
-**Your Instructions:**
-1. Address **all** specific issues mentioned in the feedback.
-2. Maintain the valuable aspects of the original response.
-3. Ensure the final answer is technically accurate, complete, and actionable.
-4. Preserve a professional tone and appropriate level of expertise.
-
-Provide only the improved, final response.
-"""
+        enhancement_prompt = ENHANCE_RESPONSE_PROMPT.format(
+            query=query,
+            response=response,
+            feedback=feedback
+        )
+        
         try:
-            enhanced_response = await self.evaluator_llm.ainvoke([HumanMessage(content=enhancement_prompt)])
+            enhanced_response = await self.evaluator_llm.ainvoke([
+                SystemMessage(content=ENHANCER_SYSTEM_PERSONA),
+                HumanMessage(content=enhancement_prompt)
+            ])
             enhanced_content = enhanced_response.content
             langfuse.score_current_span(name="response_enhancement_successful", value=1.0, comment="Response was successfully enhanced.")
             return enhanced_content
@@ -131,34 +117,14 @@ Provide only the improved, final response.
         langfuse = get_client()
         
         full_context = "\\n---\\n".join(context_chunks)
-        prompt = f"""
-You are a meticulous fact-checker. Your task is to determine if the following statement is fully supported by the provided context.
-
-**Context:**
-{full_context}
-
----
-**Statement to Verify:**
-{answer}
-
----
-**Instructions:**
-Compare the statement against the context. The statement must be directly and explicitly supported by the context.
-Provide your assessment in the required structured format.
-"""
+        prompt = CHECK_GROUNDEDNESS_PROMPT.format(context=full_context, answer=answer)
+        
         try:
-            # Retry logic with LangChain structured output
-            for attempt in range(2):
-                try:
-                    result = await self.groundedness_llm.ainvoke([
-                        SystemMessage(content="You are an expert at evaluating whether responses are grounded in provided context."),
-                        HumanMessage(content=prompt)
-                    ])
-                    break
-                except Exception as e:
-                    if attempt == 1:  # Last attempt
-                        raise e
-                    logger.warning(f"Groundedness evaluation attempt {attempt + 1} failed: {e}, retrying...")
+            message = [
+                SystemMessage(content=GROUNDEDNESS_SYSTEM_PERSONA),
+                HumanMessage(content=prompt)
+            ]
+            result = await self.groundedness_llm.ainvoke(message)
             
             langfuse.score_current_span(
                 name="rag_groundedness",
@@ -168,7 +134,7 @@ Provide your assessment in the required structured format.
             return result
         except (ValidationError, Exception) as e:
             logging.error(f"Error during groundedness check: {e}")
-            langfuse.score_current_span(name="rag_groundedness_error", value=0, comment=str(e))
+            langfuse.score_current_span(name="rag_groundedness_error", value=1, comment=str(e))
             return RAGGroundednessResult(grounded=False, feedback=f"Evaluation failed: {e}")
 
     @observe()
@@ -177,34 +143,14 @@ Provide your assessment in the required structured format.
         langfuse = get_client()
         
         full_context = "\\n---\\n".join(context_chunks)
-        prompt = f"""
-You are a relevance assessor. Your task is to determine if the provided context is relevant for answering the user's query.
-
-**User Query:**
-{query}
-
----
-**Context to Evaluate:**
-{full_context}
-
----
-**Instructions:**
-Evaluate how relevant the context is for forming a comprehensive answer to the user's query.
-Provide your assessment in the required structured format.
-"""
+        prompt = CHECK_RELEVANCE_PROMPT.format(context=full_context, query=query)
+        
         try:
-            # Retry logic with LangChain structured output
-            for attempt in range(2):
-                try:
-                    result = await self.relevance_llm.ainvoke([
-                        SystemMessage(content="You are an expert at evaluating the relevance of retrieved context to user queries."),
-                        HumanMessage(content=prompt)
-                    ])
-                    break
-                except Exception as e:
-                    if attempt == 1:  # Last attempt
-                        raise e
-                    logger.warning(f"Relevance evaluation attempt {attempt + 1} failed: {e}, retrying...")
+            message = [
+                SystemMessage(content=RELEVANCE_SYSTEM_PERSONA),
+                HumanMessage(content=prompt)
+            ]
+            result = await self.relevance_llm.ainvoke(message)
             
             langfuse.score_current_span(
                 name="rag_relevance",
@@ -214,5 +160,5 @@ Provide your assessment in the required structured format.
             return result
         except (ValidationError, Exception) as e:
             logging.error(f"Error during relevance check: {e}")
-            langfuse.score_current_span(name="rag_relevance_error", value=0, comment=str(e))
+            langfuse.score_current_span(name="rag_relevance_error", value=1, comment=str(e))
             return RAGRelevanceResult(score=0.0, is_relevant=False, feedback=f"Evaluation failed: {e}")

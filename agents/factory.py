@@ -2,66 +2,86 @@
 
 import logging
 from typing import Dict
-
 from openai import AsyncOpenAI
-
-# Assuming your config and client are accessible from a parent directory.
-# Adjust import paths based on your project's final structure.
+from langchain_openai import ChatOpenAI
 from config import AgentRole, get_enabled_agents
-from cybersec_mcp.cybersec_client import CybersecurityMCPClient
-
-# Import the base and all specialist agent classes
+from cybersec_mcp.cybersec_tools import CybersecurityToolkit
 from agents.base_agent import BaseSecurityAgent
 from agents.incident_responder import IncidentResponseAgent
 from agents.threat_analyst import ThreatIntelAgent
 from agents.prevention_specialist import PreventionAgent
 from agents.compliance_specialist import ComplianceAgent
+from agents.coordinator import CoordinatorAgent
+from workflow.router import QueryRouter
+from workflow.quality_gates import QualityGateSystem
 
 logger = logging.getLogger(__name__)
 
 
-def create_agent_pool() -> Dict[AgentRole, BaseSecurityAgent]:
+class AgentFactory:
     """
-    Initializes clients and creates a pool of all enabled specialist agents.
-
-    This factory handles dependency injection by creating the LLM and tool clients
-    once and passing them to each agent upon creation.
-
-    Returns:
-        A dictionary mapping each agent's role to its initialized instance.
+    Handles the creation and dependency injection for all agents.
     """
-    logger.info("Creating agent pool...")
+    
+    def __init__(self, llm_client: ChatOpenAI):
+        """
+        Initializes the factory with shared clients.
+        
+        Args:
+            llm_client: A shared ChatOpenAI client for all agents.
+        """
+        self.llm_client = llm_client
+        self.toolkit = CybersecurityToolkit()
+        
+        self.agent_class_map = {
+            AgentRole.INCIDENT_RESPONSE: IncidentResponseAgent,
+            AgentRole.THREAT_INTEL: ThreatIntelAgent,
+            AgentRole.PREVENTION: PreventionAgent,
+            AgentRole.COMPLIANCE: ComplianceAgent,
+            AgentRole.COORDINATOR: CoordinatorAgent,
+        }
 
-    # Initialize the clients that will be shared by all agents
-    llm_client = AsyncOpenAI()
-    mcp_client = CybersecurityMCPClient()
+    def create_agent(self, role: AgentRole) -> BaseSecurityAgent:
+        """
+        Creates a single agent with all dependencies injected.
+        """
+        AgentClass = self.agent_class_map.get(role)
+        if not AgentClass:
+            raise ValueError(f"No agent class found for role: {role}")
+            
+        try:
+            # Create an instance of the agent, injecting the shared toolkit and client
+            agent_instance = AgentClass(llm_client=self.llm_client, toolkit=self.toolkit)
+            logger.info(f"Successfully created agent: {agent_instance.name}")
+            return agent_instance
+        except Exception as e:
+            logger.error(f"Failed to create agent for role {role.value}: {e}", exc_info=True)
+            raise
 
-    # Map the AgentRole enum to the corresponding agent class
-    agent_class_map = {
-        AgentRole.INCIDENT_RESPONSE: IncidentResponseAgent,
-        AgentRole.THREAT_INTEL: ThreatIntelAgent,
-        AgentRole.PREVENTION: PreventionAgent,
-        AgentRole.COMPLIANCE: ComplianceAgent,
-        # The Coordinator agent can be added here if it becomes a specialist
-    }
+    def create_all_agents(self) -> Dict[AgentRole, BaseSecurityAgent]:
+        """
+        Creates a pool of all enabled specialist agents.
+        """
+        agent_pool: Dict[AgentRole, BaseSecurityAgent] = {}
+        enabled_agent_configs = get_enabled_agents()
 
-    agent_pool: Dict[AgentRole, BaseSecurityAgent] = {}
-    enabled_agent_configs = get_enabled_agents()
+        for agent_config in enabled_agent_configs:
+            role = agent_config["role"]
+            if role in self.agent_class_map:
+                agent_pool[role] = self.create_agent(role)
+            else:
+                logger.warning(f"No agent class found for enabled role: {role.value}")
+        
+        return agent_pool
+    
+    def create_router(self) -> "QueryRouter":
+        """
+        Creates a QueryRouter with necessary dependencies.
+        """
+        return QueryRouter(llm_client=self.llm_client, toolkit=self.toolkit)
 
-    for agent_config in enabled_agent_configs:
-        role = agent_config["role"]
-
-        if role in agent_class_map:
-            AgentClass = agent_class_map[role]
-            try:
-                # Create an instance of the agent, injecting the shared clients
-                agent_instance = AgentClass(llm_client=llm_client, mcp_client=mcp_client)
-                agent_pool[role] = agent_instance
-                logger.info(f"Successfully created agent: {agent_instance.name}")
-            except Exception as e:
-                logger.error(f"Failed to create agent for role {role.value}: {e}", exc_info=True)
-        elif role != AgentRole.COORDINATOR: # Assuming Coordinator is handled separately
-            logger.warning(f"No agent class found for enabled role: {role.value}")
-
-    logger.info(f"Agent pool creation complete with {len(agent_pool)} agents.")
-    return agent_pool
+    def create_quality_system(self) -> "QualityGateSystem":
+        """
+        Creates a QualityGateSystem with necessary dependencies.
+        """
+        return QualityGateSystem(llm_client=self.llm_client)

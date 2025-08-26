@@ -4,7 +4,7 @@ Search for threat intelligence reports (Pulses) on AlienVault OTX.
 
 import logging
 from typing import List, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from langchain_core.tools import BaseTool
 import httpx
 from config.settings import settings
@@ -54,12 +54,17 @@ class ThreatFeedsTool(BaseTool):
     """Tool for searching threat intelligence feeds via AlienVault OTX"""
     name: str = "threat_feeds"
     description: str = "Query threat intelligence feeds for information about threat actors, campaigns, or TTPs."
+    otx_api_key: str = Field(default_factory=lambda: settings.get_secret("otx_api_key"))
+    base_url: str = "https://otx.alienvault.com/api/v1"
+    client: httpx.AsyncClient = None
+
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
 
     def __init__(self, **data):
         super().__init__(**data)
         """Initialize OTX client using centralized secret management."""
-        self.otx_api_key = settings.get_secret("otx_api_key")
-        self.base_url = "https://otx.alienvault.com/api/v1"
+        if not self.otx_api_key:
+            raise ValueError("OTX_API_KEY is not configured in settings")
         self.client = httpx.AsyncClient(headers={"X-OTX-API-KEY": self.otx_api_key}, timeout=30.0)
 
     def _run(

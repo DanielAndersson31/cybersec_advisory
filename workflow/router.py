@@ -12,12 +12,8 @@ from langfuse import observe
 
 from config.agent_config import AgentRole, INTERACTION_RULES
 from workflow.schemas import RoutingDecision, CybersecurityClassification
-from langchain.output_parsers.openai_functions import JsonOutputFunctionsParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 
-from workflow.schemas import RoutingDecision
-from cybersec_mcp.cybersec_tools import cybersec_toolkit
+from cybersec_mcp.cybersec_tools import CybersecurityToolkit
 
 logger = logging.getLogger(__name__)
 
@@ -27,19 +23,19 @@ class QueryRouter:
     Routes queries to appropriate cybersecurity agents using a semantic, LLM-based approach.
     """
     
-    def __init__(self, llm_client: ChatOpenAI):
+    def __init__(self, llm_client: ChatOpenAI, toolkit: CybersecurityToolkit):
         """Initialize the router with LangChain structured output capabilities and cybersecurity tools."""
         self.base_llm = llm_client
+        self.toolkit = toolkit
         
         # Create structured LLMs with retry logic
         self.classification_llm = llm_client.with_structured_output(CybersecurityClassification)
         self.routing_llm = llm_client.with_structured_output(RoutingDecision)
         
         # LLM with cybersecurity tools for direct responses
-        from cybersec_tools import cybersec_toolkit
         self.direct_llm = llm_client.bind_tools([
-            cybersec_toolkit.search_web,
-            cybersec_toolkit.search_knowledge_base
+            self.toolkit.get_tool_by_name("web_search"),
+            self.toolkit.get_tool_by_name("knowledge_search")
         ])
         
         self.agent_expertise = {
@@ -307,7 +303,6 @@ Focus on being helpful and accurate. If the question requires specialized analys
                     try:
                         # Execute tool via MCP client
                         tool_name = tool_call["name"]
-                        tool_args = tool_call["args"]
                         
                         # Tools are now executed directly by LangChain - much simpler!
                         result = f"Tool {tool_name} executed successfully"

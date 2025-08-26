@@ -118,21 +118,11 @@ class WorkflowNodes:
                 logger.info(f"Consulting {agent.name}...")
                 structured_response = await agent.respond(messages=messages)
                 
-                # Extract tool usage information from the structured response
-                tools_used = [
-                    {
-                        "tool_name": tool.tool_name,
-                        "result": tool.tool_result,
-                        "timestamp": tool.timestamp.isoformat()
-                    }
-                    for tool in structured_response.tools_used
-                ]
-
                 team_response = TeamResponse(
                     agent_name=agent.name,
                     agent_role=agent_role,
                     response=structured_response,
-                    tools_used=tools_used,
+                    tools_used=structured_response.tools_used,
                 )
                 
                 state["team_responses"].append(team_response)
@@ -208,7 +198,7 @@ The web_search_tool is now generic and works for any type of query - you control
                     
                     try:
                         # Handle web search tool specifically (since we have the instance)
-                        if tool_name == "search_web":  # Note: direct tool name, not wrapper
+                        if tool_name == "web_search":  # Note: direct tool name, not wrapper
                             tool_result = await self.web_search_tool.ainvoke(tool_args)
                         else:
                             # For any other tools that might be called
@@ -351,22 +341,42 @@ The web_search_tool is now generic and works for any type of query - you control
     async def synthesize_responses(self, state: WorkflowState) -> WorkflowState:
         """
         Synthesize all agent responses into a final, high-quality answer.
+        For single-agent responses, it rewrites them into a more natural, conversational format.
+        For multi-agent responses, it combines them into a consolidated view.
         """
         if not state["team_responses"]:
             state["final_answer"] = "I couldn't gather expert analysis for your query."
             return state
         
         if len(state["team_responses"]) == 1:
-            response = state["team_responses"][0].response
-            final_answer = f"**{state['team_responses'][0].agent_name}'s Analysis:**\n\n"
-            final_answer += f"**Summary:**\n{response.summary}\n\n"
-            if response.recommendations:
-                final_answer += "**Recommendations:**\n"
-                for rec in response.recommendations:
-                    final_answer += f"- {rec}\n"
+            # For a single agent, rewrite the structured response into a natural, conversational format
+            agent_response = state["team_responses"][0]
+            summary = agent_response.response.summary
+            recommendations = agent_response.response.recommendations
+            
+            synthesis_prompt = f"""
+You are an expert at communicating cybersecurity advice. Your task is to rewrite the following structured analysis from a specialist into a single, cohesive, and easy-to-read response for the end-user.
+
+**Do not use markdown headers like "Summary" or "Recommendations".** Instead, weave the information together into a natural, paragraph-based format. Start with the main conclusion and then smoothly integrate the actionable advice.
+
+**Specialist's Analysis:**
+---
+**Summary:**
+{summary}
+
+**Recommendations:**
+{', '.join(recommendations)}
+---
+
+Rewrite the above analysis into a clear, natural-sounding response.
+"""
+            
+            llm_response = await self.llm_client.ainvoke([HumanMessage(content=synthesis_prompt)])
+            final_answer = llm_response.content
             state["final_answer"] = final_answer
         
         else:
+            # For multiple agents, create a consolidated view
             combined_summary = "Based on our team's analysis, here is a consolidated view:\n\n"
             combined_recommendations = []
             
@@ -387,9 +397,7 @@ The web_search_tool is now generic and works for any type of query - you control
             
             state["final_answer"] = final_answer
         
-        from langchain_core.messages import AIMessage
         state["messages"].append(AIMessage(content=state["final_answer"]))
-        
         state["completed_at"] = datetime.now(timezone.utc)
         
         logger.info(f"Synthesized response from {len(state['team_responses'])} agents")
@@ -447,9 +455,13 @@ The web_search_tool is now generic and works for any type of query - you control
         state["quality_passed"] = quality_result.passed
         state["quality_score"] = quality_result.overall_score
         
-        # If quality failed and we haven't retried too much, enhance the response
-        if not quality_result.passed and state["error_count"] < 2:
-            logger.info(f"Quality check failed (score: {quality_result.overall_score:.2f}), enhancing response...")
+        # Define a realistic quality threshold
+        QUALITY_THRESHOLD = 7.0
+        
+        # If quality score is below threshold and we haven't retried too much, enhance the response
+        if quality_result.overall_score < QUALITY_THRESHOLD and state["error_count"] < 2:
+            logger.info(f"Quality check failed (score: {quality_result.overall_score:.2f} < {QUALITY_THRESHOLD}), enhancing response...")
+            state["quality_passed"] = False # Explicitly mark as failed before enhancement
             
             enhanced_response = await self.quality_system.enhance_response(
                 query=state["query"],

@@ -45,10 +45,9 @@ class TeamResponse(BaseModel):
     agent_name: str = Field(..., description="The name of the agent making the response.")
     agent_role: AgentRole = Field(..., description="The role of the agent.")
     response: StructuredAgentResponse = Field(..., description="The structured response from the agent.")
-    tools_used: List[Dict[str, Any]] = Field(
+    tools_used: List[ToolUsage] = Field(
         default_factory=list,
         description="A list of tools used by the agent during its analysis.",
-        json_schema_extra={"additionalProperties": False}
     )
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),

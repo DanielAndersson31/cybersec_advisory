@@ -4,12 +4,10 @@ Orchestrates how agents collaborate to answer queries.
 """
 
 import logging
-from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from langgraph.graph import StateGraph, END
 from langfuse import observe
-from langchain_core.messages import AIMessage
 
 from workflow.state import WorkflowState
 from workflow.nodes import WorkflowNodes
@@ -17,9 +15,6 @@ from workflow.fallbacks import ErrorHandler
 from agents.factory import AgentFactory
 from langchain_openai import ChatOpenAI
 from config.settings import settings
-from config.agent_config import AgentRole
-from workflow.quality_gates import QualityGateSystem
-from workflow.router import QueryRouter
 from cybersec_mcp.cybersec_tools import CybersecurityToolkit
 
 
@@ -66,7 +61,7 @@ class CybersecurityTeamGraph:
         self.app = None
         self.checkpointer = None
         
-        logger.info(f"Team workflow initialized with {len(self.agents)} agents")
+        logger.info("Team workflow initialized.")
     
     def compile_with_checkpointer(self, checkpointer):
         """
@@ -98,6 +93,7 @@ class CybersecurityTeamGraph:
         workflow.add_node("direct_response", self.nodes.direct_response)
         workflow.add_node("consult_agent", self.nodes.consult_agent)
         workflow.add_node("coordinate", self.nodes.coordinate_responses)
+        workflow.add_node("synthesis", self.nodes.synthesize_responses)
         
         # Add quality check if enabled
         if self.enable_quality_checks:
@@ -133,10 +129,16 @@ class CybersecurityTeamGraph:
             "consult_agent",
             self._route_after_consultation,
             {
-                "single_response": "quality" if self.enable_quality_checks else END,
+                "synthesis": "synthesis",
                 "coordinate": "coordinate"
             }
         )
+        
+        # After synthesis, go to quality check
+        if self.enable_quality_checks:
+            workflow.add_edge("synthesis", "quality")
+        else:
+            workflow.add_edge("synthesis", END)
         
         # Quality check flow if enabled
         if self.enable_quality_checks:
@@ -177,34 +179,17 @@ class CybersecurityTeamGraph:
             logger.info(f"Routing to multi-agent consultation: {state.get('agents_to_consult', [])}")
             return "multi_agent"
     
-    def _route_after_consultation(self, state: WorkflowState) -> Literal["single_response", "coordinate"]:
+    def _route_after_consultation(self, state: WorkflowState) -> Literal["synthesis", "coordinate"]:
         """
         Route after agent consultation based on whether single or multi-agent response.
-        Single agent responses can skip coordinator synthesis for efficiency.
         """
         team_responses = state.get("team_responses", [])
         needs_consensus = state.get("needs_consensus", False)
         
-        # If only one agent responded and consensus isn't needed, use direct response
+        # If only one agent responded and consensus isn't needed, synthesize directly.
         if len(team_responses) == 1 and not needs_consensus:
-            agent_name = team_responses[0].agent_name
-            confidence = team_responses[0].response.confidence_score
-            logger.info(f"Single agent response from {agent_name} (confidence: {confidence:.2f}) - skipping coordinator")
-            
-            # Format the single response directly in state
-            response = team_responses[0].response
-            final_answer = f"**{team_responses[0].agent_name}'s Analysis:**\n\n"
-            final_answer += f"**Summary:**\n{response.summary}\n\n"
-            if response.recommendations:
-                final_answer += "**Recommendations:**\n"
-                for rec in response.recommendations:
-                    final_answer += f"- {rec}\n"
-            
-            state["final_answer"] = final_answer
-            state["messages"].append(AIMessage(content=final_answer))
-            state["completed_at"] = datetime.now(timezone.utc)
-            
-            return "single_response"
+            logger.info(f"Single agent response from {team_responses[0].agent_name} - routing to synthesis.")
+            return "synthesis"
         else:
             # Multiple agents or consensus needed - use coordinator
             logger.info(f"Multiple agents ({len(team_responses)}) or consensus needed - routing to coordinator")

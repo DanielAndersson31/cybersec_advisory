@@ -4,7 +4,7 @@ Uses configuration data from compliance_frameworks.
 """
 
 from typing import List, Optional, Dict
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from langchain_core.tools import BaseTool
 from datetime import timedelta
 import logging
@@ -63,6 +63,9 @@ class ComplianceGuidanceTool(BaseTool):
     """Provide compliance guidance with all business logic"""
     name: str = "compliance_guidance"
     description: str = "Get compliance guidance for security frameworks like GDPR, HIPAA, PCI-DSS."
+    frameworks: List[ComplianceFramework] = []
+
+    model_config = ConfigDict(extra="allow")
 
     def __init__(self, **data):
         super().__init__(**data)

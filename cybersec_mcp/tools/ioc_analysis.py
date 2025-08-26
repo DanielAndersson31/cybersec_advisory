@@ -4,9 +4,9 @@ Simple IOC analysis tool using VirusTotal API with Pydantic models.
 
 import logging
 import re
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from config.settings import settings
 from langchain_core.tools import BaseTool
 import asyncio
@@ -46,6 +46,9 @@ class IOCAnalysisTool(BaseTool):
     description: str = "Analyze an Indicator of Compromise (IOC) like IP address, domain, or file hash."
     vt_api_key: str = Field(default_factory=lambda: settings.get_secret("virustotal_api_key"))
     base_url: str = "https://www.virustotal.com/api/v3"
+    patterns: Dict[str, re.Pattern] = {}
+
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
 
     def __init__(self, **data):
         super().__init__(**data)

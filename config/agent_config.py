@@ -6,7 +6,10 @@ Detailed implementations are in the agents/ folder.
 
 from typing import Dict, List, Any
 from enum import Enum
+
+from langchain_core.tools import BaseTool
 from .settings import settings
+from cybersec_mcp.cybersec_tools import CybersecurityToolkit
 
 
 class AgentRole(Enum):
@@ -209,22 +212,17 @@ def get_agent_config(role: AgentRole) -> Dict[str, Any]:
     return AGENT_CONFIGS[role]
 
 
-def get_agent_tools(role: AgentRole) -> List[Dict[str, Any]]:
+def get_agent_tools(role: AgentRole, toolkit: CybersecurityToolkit) -> List[BaseTool]:
     """
-    Gets the full, correctly formatted tool definitions for an agent.
-    Wraps the function definition with the required 'type: "function"' structure.
+    Gets the permitted BaseTool objects for an agent's role.
     """
     allowed_tool_names = AGENT_TOOL_PERMISSIONS.get(role, [])
-    formatted_tools = []
+    agent_tools = []
     for tool_name in allowed_tool_names:
-        if tool_name in TOOL_DEFINITIONS:
-            tool_def = TOOL_DEFINITIONS[tool_name]
-            # Wrap the existing definition in the required format
-            formatted_tools.append({
-                "type": "function",
-                "function": tool_def
-            })
-    return formatted_tools
+        tool = toolkit.get_tool_by_name(tool_name)
+        if tool:
+            agent_tools.append(tool)
+    return agent_tools
 
 
 def get_quality_threshold(role: AgentRole) -> float:

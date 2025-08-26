@@ -13,6 +13,7 @@ from .agent_config import (
     AgentRole,
     get_agent_config,
     get_agent_tools,
+    get_enabled_agents,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "AgentRole",
     "get_agent_config",
     "get_agent_tools",
+    "get_enabled_agents",
 ]
