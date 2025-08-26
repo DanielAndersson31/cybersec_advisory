@@ -51,6 +51,20 @@ class CybersecurityChatInterface:
         # Session management for multi-chat support
         self.sessions: Dict[str, str] = {}  # Maps session_id to thread_id
     
+    async def handle_submit(self, message: str, history: List[List[str]], session_id_val: str):
+        """Handle message submission with streaming and immediate user message display."""
+        if not message.strip():
+            yield history, ""
+            return
+        
+        # Immediately add user message to the chat
+        history.append([message, None])
+        yield history, ""
+
+        # Process the message and stream the response
+        async for updated_history in self.process_message(message, history, session_id_val):
+            yield updated_history, ""
+    
     async def initialize_system(self) -> bool:
         """
         Initialize the cybersecurity advisory system.
@@ -172,68 +186,119 @@ class CybersecurityChatInterface:
             Configured Gradio Blocks interface
         """
         custom_css = """
-        .gradio-container { 
-            font-family: 'Inter', sans-serif; 
-            background: #f8fafc;
+        :root {
+            --primary-color: #3b82f6;
+            --secondary-color: #1e293b;
+            --background-color: #f1f5f9;
+            --card-background: #ffffff;
+            --text-color: #334155;
+            --header-text-color: #ffffff;
+            --border-color: #e2e8f0;
         }
-        .header { 
-            background: #0f172a; 
-            padding: 1.5rem; 
-            color: white; 
-            text-align: center; 
-            border-bottom: 2px solid #3b82f6;
+        /* --- Base Layout --- */
+        .gradio-container {
+            font-family: 'Inter', sans-serif;
+            background: var(--background-color);
+            height: 100vh;
+            overflow: hidden; /* No scroll on the main container */
         }
-        .header h1 { 
-            font-size: 2rem; 
-            font-weight: 700; 
+        /* --- Header --- */
+        .header {
+            background: var(--secondary-color);
+            padding: 1rem 1.5rem;
+            color: var(--header-text-color);
+            text-align: center;
+            border-bottom: 3px solid var(--primary-color);
+        }
+        .header h1 {
+            font-size: 1.6rem;
+            font-weight: 600;
             margin: 0;
             display: flex;
             align-items: center;
             justify-content: center;
         }
-        .header p { 
-            font-size: 1rem; 
-            opacity: 0.8; 
-            margin-top: 0.5rem;
+        .header p {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            margin-top: 0.3rem;
         }
-        .main-layout { 
-            display: flex; 
-            gap: 1.5rem; 
-            height: calc(100vh - 120px);
+        /* --- Main Layout Grid --- */
+        .main-layout {
+            display: grid;
+            grid-template-columns: 280px 1fr; /* Sidebar for chats, main content */
+            gap: 1.5rem;
+            height: calc(100vh - 80px); /* Full height minus header */
             padding: 1.5rem;
         }
-        .left-panel { 
-            flex: 1; 
-            background: white; 
-            border-radius: 8px; 
+        /* --- Left Panel (Chat Management) --- */
+        .left-panel {
+            background: var(--card-background);
+            border-radius: 12px;
             padding: 1.5rem;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
             display: flex;
             flex-direction: column;
-        }
-        .right-panel { 
-            flex: 3; 
-            background: white; 
-            border-radius: 8px; 
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
+            border: 1px solid var(--border-color);
+            overflow-y: auto;
         }
         .panel-header {
-            font-size: 1.2rem;
+            font-size: 1.1rem;
             font-weight: 600;
             margin-bottom: 1rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
             display: flex;
             align-items: center;
+            justify-content: space-between;
+            color: var(--text-color);
         }
         .panel-header svg { margin-right: 0.5rem; }
-        .agent-list p { margin: 0.5rem 0; }
-        .tips-box { background: #fef3c7; border-radius: 6px; padding: 1rem; }
-        .chat-container { flex-grow: 1; overflow-y: auto; padding: 1rem; }
-        .input-area { padding: 1rem; border-top: 1px solid #e2e8f0; }
+        .chat-list {
+            overflow-y: auto;
+            flex-grow: 1;
+        }
+        .chat-item {
+            padding: 0.75rem;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 0.5rem;
+            border: 1px solid transparent;
+        }
+        .chat-item:hover {
+            background: #f1f5f9;
+        }
+        .chat-item.selected {
+            background: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+        /* --- Right Panel (Main Chat) --- */
+        .right-panel {
+            background: var(--card-background);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden; /* Important for child scrolling */
+            border: 1px solid var(--border-color);
+        }
+        .chat-container {
+            flex-grow: 1; /* Allows this to take up available space */
+            overflow-y: auto; /* Enables scrolling for chat history */
+            padding: 1.5rem;
+        }
+        .input-area {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border-color);
+            background: #f8fafc;
+        }
+        .examples-area {
+            padding: 0 1.5rem 1rem 1.5rem;
+            background: #f8fafc;
+            border-bottom-left-radius: 12px;
+            border-bottom-right-radius: 12px;
+        }
         """
         
         with gr.Blocks(
@@ -251,8 +316,8 @@ class CybersecurityChatInterface:
             gr.HTML("""
             <div class="header">
                 <h1>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-                    Cybersecurity Advisory System
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                    &nbsp;Cybersecurity Advisory System
                 </h1>
                 <p>AI-Powered Multi-Agent Security Consultation</p>
             </div>
@@ -261,9 +326,23 @@ class CybersecurityChatInterface:
             with gr.Row(elem_classes="main-layout"):
                 with gr.Column(elem_classes="left-panel"):
                     gr.HTML("""
+                    <div class="panel-header">
+                        <span>Conversations</span>
+                        <button id="new-chat-btn" onclick="() => alert('New Chat!')" style="background:none; border:none; cursor:pointer;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        </button>
+                    </div>
+                    """)
+                    chat_list = gr.Radio(
+                        ["Chat 1", "Chat 2"], label="Chats", show_label=False, container=False, elem_classes="chat-list"
+                    )
+                    
+                    gr.HTML("""<hr style="border-top: 1px solid var(--border-color); margin: 1rem 0;">""")
+                    
+                    gr.HTML("""
                     <h2 class="panel-header">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-                        Available Security Specialists
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                        Available Specialists
                     </h2>
                     <div class="agent-list">
                         <p><strong>Sarah Chen</strong> - Incident Response</p>
@@ -271,17 +350,15 @@ class CybersecurityChatInterface:
                         <p><strong>Dr. Kim Park</strong> - Threat Intelligence</p>
                         <p><strong>Maria Santos</strong> - Compliance</p>
                     </div>
-                    <div style="flex-grow: 1;"></div>
                     <div class="tips-box">
                         <h3 class="panel-header" style="border: none; margin-bottom: 0.5rem;">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
                             Quick Tips
                         </h3>
                         <ul>
                             <li>Ask about security incidents</li>
                             <li>Get compliance guidance</li>
                             <li>Analyze threats & hashes</li>
-                            <li>Discuss prevention strategies</li>
                         </ul>
                     </div>
                     """)
@@ -295,11 +372,12 @@ class CybersecurityChatInterface:
                         avatar_images=(
                             "https://api.dicebear.com/7.x/avataaars/svg?seed=User&backgroundColor=64748b",
                             self.bot_avatar
-                        )
+                        ),
+                        value=[[None, "Hello! How can I assist you with your cybersecurity needs today?"]]
                     )
                     
                     with gr.Row(elem_classes="input-area"):
-                        with gr.Column(scale=10):
+                        with gr.Column(scale=9):
                             msg = gr.Textbox(
                                 label="Ask your cybersecurity question",
                                 placeholder="Type your security question here and press Enter...",
@@ -308,47 +386,34 @@ class CybersecurityChatInterface:
                                 container=False
                             )
                         
-                        with gr.Column(scale=1, min_width=100):
-                            submit_btn = gr.Button("Ask Team", variant="primary")
-
-            with gr.Row(style={"padding": "0 1.5rem"}):
-                gr.Examples(
-                    examples=self.get_example_queries(),
-                    inputs=msg,
-                    label="Example Questions"
-                )
-                clear_btn = gr.Button("🗑️ Clear Chat")
-
-            async def handle_submit(message: str, history: List[List[str]], session_id_val: str):
-                """Handle message submission with streaming."""
-                if not message.strip():
-                    return history, message
-                
-                async for updated_history in self.process_message(message, history, session_id_val):
-                    yield updated_history, ""
-
+                        with gr.Column(scale=1, min_width=160):
+                            with gr.Row():
+                                submit_btn = gr.Button("Ask Team", variant="primary", scale=1)
+                                clear_btn = gr.Button("Clear Chat", variant="secondary", scale=1)
+                    
+                    with gr.Column(elem_classes="examples-area"):
+                        gr.Examples(
+                            examples=self.get_example_queries(),
+                            inputs=msg,
+                            label="Example Questions"
+                        )
+            
+            # Event Listeners
             submit_btn.click(
-                handle_submit,
-                inputs=[msg, chatbot, session_id],
-                outputs=[chatbot, msg],
-                show_progress=True
+                self.handle_submit, 
+                [msg, chatbot, session_id], 
+                [chatbot, msg],
+                show_progress="hidden"
             )
-            
             msg.submit(
-                handle_submit,
-                inputs=[msg, chatbot, session_id],
-                outputs=[chatbot, msg],
-                show_progress=True
+                self.handle_submit, 
+                [msg, chatbot, session_id], 
+                [chatbot, msg],
+                show_progress="hidden"
             )
-            
-            clear_btn.click(
-                self.clear_chat_session,
-                inputs=[session_id],
-                outputs=[chatbot, msg],
-                show_progress=True
-            )
+            clear_btn.click(self.clear_chat_session, [session_id], [chatbot, msg])
         
-        return interface
+        self.interface = interface
     
     def launch(
         self, 
@@ -377,10 +442,10 @@ class CybersecurityChatInterface:
                 return
             
             # Create and launch interface
-            interface = self.create_interface()
+            self.create_interface() # Call create_interface to set self.interface
             
             logger.info(f"🚀 Launching interface on http://{host}:{port}")
-            interface.launch(
+            self.interface.launch(
                 server_name=host,
                 server_port=port,
                 share=share,
