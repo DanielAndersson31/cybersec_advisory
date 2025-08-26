@@ -4,7 +4,6 @@ Integrated with your existing QualityGateSystem.
 """
 
 import logging
-from typing import Dict, Any
 from datetime import datetime, timezone
 from langfuse import observe
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
@@ -12,6 +11,9 @@ from langchain_openai import ChatOpenAI
 from workflow.state import WorkflowState
 from workflow.schemas import TeamResponse
 from config.agent_config import AgentRole
+from agents.factory import AgentFactory
+from cybersec_mcp.cybersec_tools import CybersecurityToolkit
+
 
 logger = logging.getLogger(__name__)
 
@@ -21,16 +23,29 @@ class WorkflowNodes:
     Contains all node functions for the workflow graph.
     """
     
-    def __init__(self, agents: Dict[AgentRole, Any], coordinator: Any, router: Any, quality_system: Any, llm_client: ChatOpenAI, enable_quality_gates: bool = True):
+    def __init__(self, agent_factory: "AgentFactory", toolkit: CybersecurityToolkit, llm_client: ChatOpenAI, enable_quality_gates: bool = True):
         """
-        Initialize with available agents, a coordinator, and pre-initialized components.
+        Initialize with agent factory, toolkit, and other components.
         """
-        self.agents = agents
-        self.coordinator = coordinator
-        self.router = router
-        self.quality_system = quality_system
-        self.llm_client = llm_client  # Reuse shared LLM client
+        self.agent_factory = agent_factory
+        self.toolkit = toolkit
+        self.llm_client = llm_client
         self.enable_quality_gates = enable_quality_gates
+        
+        # We can get agents and coordinator from the factory when needed
+        self.agents = agent_factory.create_all_agents()
+        self.coordinator = agent_factory.create_agent(AgentRole.COORDINATOR)
+        
+        # Initialize other components
+        self.router = self.agent_factory.create_router()
+        self.quality_system = self.agent_factory.create_quality_system()
+
+        # Pre-initialize the web search tool
+        self.web_search_tool = self.toolkit.get_tool_by_name("web_search")
+        if not self.web_search_tool:
+            logger.warning("Web search tool not found in toolkit. General responses may be limited.")
+        else:
+            logger.info("Web search tool pre-initialized for general assistant.")
 
     @observe(name="analyze_query")
     async def analyze_query(self, state: WorkflowState) -> WorkflowState:
@@ -148,13 +163,8 @@ class WorkflowNodes:
             # Use shared LLM client
             llm = self.llm_client
             
-            # Get web search tool from toolkit (as a LangChain tool)
-            from cybersec_tools import cybersec_toolkit
-            available_tools = cybersec_toolkit.get_all_tools()
-            web_search_tool = next(tool for tool in available_tools if tool.name == "search_web")
-            
             # Bind the web search tool to the LLM  
-            llm_with_tools = llm.bind_tools([web_search_tool])
+            llm_with_tools = llm.bind_tools([self.web_search_tool])
             
             # System prompt for general assistant with web search
             system_prompt = """
@@ -199,7 +209,7 @@ The web_search_tool is now generic and works for any type of query - you control
                     try:
                         # Handle web search tool specifically (since we have the instance)
                         if tool_name == "search_web":  # Note: direct tool name, not wrapper
-                            tool_result = await web_search_tool.ainvoke(tool_args)
+                            tool_result = await self.web_search_tool.ainvoke(tool_args)
                         else:
                             # For any other tools that might be called
                             tool_result = f"Tool {tool_name} executed successfully"

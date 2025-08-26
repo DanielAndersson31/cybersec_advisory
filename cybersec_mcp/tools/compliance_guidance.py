@@ -5,6 +5,7 @@ Uses configuration data from compliance_frameworks.
 
 from typing import List, Optional, Dict
 from pydantic import BaseModel
+from langchain_core.tools import BaseTool
 from datetime import timedelta
 import logging
 
@@ -58,13 +59,35 @@ class ComplianceGuidanceResponse(BaseModel):
     error: Optional[str] = None
 
 
-class ComplianceGuidanceTool:
+class ComplianceGuidanceTool(BaseTool):
     """Provide compliance guidance with all business logic"""
-    
-    def __init__(self):
-        """Initialize compliance guidance tool"""
+    name: str = "compliance_guidance"
+    description: str = "Get compliance guidance for security frameworks like GDPR, HIPAA, PCI-DSS."
+
+    def __init__(self, **data):
+        super().__init__(**data)
         self.frameworks = list(ComplianceFramework)
     
+    def _run(
+        self,
+        framework: Optional[str] = None,
+        data_type: Optional[str] = None,
+        region: Optional[str] = None,
+        incident_type: Optional[str] = None
+    ) -> ComplianceGuidanceResponse:
+        """Get compliance guidance for specific framework or situation."""
+        return self.get_guidance(framework, data_type, region, incident_type)
+
+    async def _arun(
+        self,
+        framework: Optional[str] = None,
+        data_type: Optional[str] = None,
+        region: Optional[str] = None,
+        incident_type: Optional[str] = None
+    ) -> ComplianceGuidanceResponse:
+        """Get compliance guidance for specific framework or situation."""
+        return self.get_guidance(framework, data_type, region, incident_type)
+
     # === Private Helper Methods ===
     
     def _get_breach_timeline(self, framework: ComplianceFramework, target: str = "authority") -> Optional[timedelta]:
@@ -289,14 +312,3 @@ class ComplianceGuidanceTool:
             return f"{total_seconds // 3600} hours"
         else:
             return f"{total_seconds // 86400} days"
-
-
-# Create singleton instance
-compliance_guidance_tool = ComplianceGuidanceTool()
-
-
-# Export function for compatibility
-def get_compliance_guidance(**kwargs) -> dict:
-    """Compliance guidance function that MCP servers will import"""
-    response = compliance_guidance_tool.get_guidance(**kwargs)
-    return response.model_dump()

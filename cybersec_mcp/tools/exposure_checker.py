@@ -6,6 +6,8 @@ import logging
 from typing import List, Optional
 import httpx
 from pydantic import BaseModel
+from langchain_core.tools import BaseTool
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +29,27 @@ class ExposureCheckResponse(BaseModel):
     message: Optional[str] = None
 
 
-class ExposureCheckerTool:
+class ExposureCheckerTool(BaseTool):
     """
     Tool to check for email exposure using the XposedOrNot API.
     """
+    name: str = "exposure_checker"
+    description: str = "Check if an email address has been exposed in data breaches."
 
-    def __init__(self):
+    def __init__(self, **data):
+        super().__init__(**data)
         """Initialize the XposedOrNot client."""
         self.base_url = "https://api.xposedornot.com/v1"
         self.client = httpx.AsyncClient(timeout=30.0)
         logger.info("ExposureCheckerTool initialized, using XposedOrNot API.")
+
+    def _run(self, email: str) -> ExposureCheckResponse:
+        """Checks a single email address against the XposedOrNot database."""
+        return asyncio.run(self.check(email))
+
+    async def _arun(self, email: str) -> ExposureCheckResponse:
+        """Checks a single email address against the XposedOrNot database."""
+        return await self.check(email)
 
     async def check(self, email: str) -> ExposureCheckResponse:
         """Checks a single email address against the XposedOrNot database."""
@@ -122,18 +135,3 @@ class ExposureCheckerTool:
                 error=f"Unexpected error: {str(e)}"
             )
 
-
-# Create a singleton instance
-exposure_checker_tool = ExposureCheckerTool()
-
-
-# Export function for easy use in MCP server
-async def check_exposure(email: str) -> dict:
-    """
-    Checks a given email address against the XposedOrNot API for public exposures.
-    This is a convenience wrapper around the ExposureCheckerTool.
-    """
-    logger.info(f"Initiating exposure check for email: {email}")
-    # Use the singleton instance of the tool
-    response_model = await exposure_checker_tool.check(email)
-    return response_model.model_dump()

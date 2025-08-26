@@ -4,7 +4,8 @@ Search for threat intelligence reports (Pulses) on AlienVault OTX.
 
 import logging
 from typing import List, Optional, Union
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from langchain_core.tools import BaseTool
 import httpx
 from config.settings import settings
 import asyncio
@@ -49,14 +50,35 @@ class ThreatFeedResponse(BaseModel):
     error: Optional[str] = None
 
 
-class ThreatFeedsTool:
+class ThreatFeedsTool(BaseTool):
     """Tool for searching threat intelligence feeds via AlienVault OTX"""
+    name: str = "threat_feeds"
+    description: str = "Query threat intelligence feeds for information about threat actors, campaigns, or TTPs."
 
-    def __init__(self):
+    def __init__(self, **data):
+        super().__init__(**data)
         """Initialize OTX client using centralized secret management."""
         self.otx_api_key = settings.get_secret("otx_api_key")
         self.base_url = "https://otx.alienvault.com/api/v1"
         self.client = httpx.AsyncClient(headers={"X-OTX-API-KEY": self.otx_api_key}, timeout=30.0)
+
+    def _run(
+        self, 
+        query: str, 
+        limit: int = 5,
+        fetch_full_details: bool = False
+    ) -> ThreatFeedResponse:
+        """Search for threat pulses on AlienVault OTX."""
+        return asyncio.run(self.search(query, limit, fetch_full_details))
+
+    async def _arun(
+        self, 
+        query: str, 
+        limit: int = 5,
+        fetch_full_details: bool = False
+    ) -> ThreatFeedResponse:
+        """Search for threat pulses on AlienVault OTX."""
+        return await self.search(query, limit, fetch_full_details)
 
     async def get_pulse_details(self, pulse_id: str) -> Optional[ThreatPulse]:
         """Fetch the full details for a single threat pulse, including IOCs."""
@@ -143,16 +165,3 @@ class ThreatFeedsTool:
                 results=[],
                 error=str(e)
             )
-
-# Create a singleton instance of the tool, matching the other files
-threat_feeds_tool = ThreatFeedsTool()
-
-
-# Export function that the MCP server will import
-async def search_threat_feeds(**kwargs) -> dict:
-    """
-    Searches AlienVault OTX for threat intelligence reports (Pulses).
-    This function is the entry point for the MCP server.
-    """
-    response = await threat_feeds_tool.search(**kwargs)
-    return response.model_dump()

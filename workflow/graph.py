@@ -15,12 +15,12 @@ from workflow.state import WorkflowState
 from workflow.nodes import WorkflowNodes
 from workflow.fallbacks import ErrorHandler
 from agents.factory import AgentFactory
-# No longer need MCP client - using direct tools!
 from langchain_openai import ChatOpenAI
 from config.settings import settings
 from config.agent_config import AgentRole
 from workflow.quality_gates import QualityGateSystem
 from workflow.router import QueryRouter
+from cybersec_mcp.cybersec_tools import CybersecurityToolkit
 
 
 logger = logging.getLogger(__name__)
@@ -47,16 +47,13 @@ class CybersecurityTeamGraph:
 
         # Create all agents using the factory (much simpler now!)
         self.factory = AgentFactory(llm_client=llm_client)
-        self.agents = self.factory.create_all_agents()
-        self.coordinator = self.factory.create_agent(AgentRole.COORDINATOR)
         
         # Initialize workflow components
+        self.toolkit = CybersecurityToolkit()
         self.nodes = WorkflowNodes(
-            agents=self.agents,
-            coordinator=self.coordinator,
-            router=QueryRouter(llm_client),  # Much simpler now!
-            quality_system=QualityGateSystem(llm_client),
-            llm_client=llm_client,  # Pass shared LLM client
+            agent_factory=self.factory,
+            toolkit=self.toolkit,
+            llm_client=llm_client,
             enable_quality_gates=enable_quality_checks
         )
         self.error_handler = ErrorHandler()

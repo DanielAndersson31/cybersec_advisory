@@ -12,7 +12,12 @@ from langfuse import observe
 
 from config.agent_config import AgentRole, INTERACTION_RULES
 from workflow.schemas import RoutingDecision, CybersecurityClassification
-# No longer need MCP client - using direct tools!
+from langchain.output_parsers.openai_functions import JsonOutputFunctionsParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+
+from workflow.schemas import RoutingDecision
+from cybersec_mcp.cybersec_tools import cybersec_toolkit
 
 logger = logging.getLogger(__name__)
 

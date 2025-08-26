@@ -7,10 +7,11 @@ This tool performs semantic search against a Qdrant vector database.
 from typing import Dict, Any, List, Optional
 import logging
 from pydantic import BaseModel
+from langchain_core.tools import BaseTool
+import asyncio
 
 # Correctly import the application's KnowledgeRetriever
 from knowledge.knowledge_retrieval import knowledge_retriever
-import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,28 @@ class KnowledgeSearchResponse(BaseModel):
     error: Optional[str] = None
 
 
-class KnowledgeSearchTool:
+class KnowledgeSearchTool(BaseTool):
     """A tool for performing semantic search on the cybersecurity knowledge base."""
+    name: str = "knowledge_search"
+    description: str = "Search the internal knowledge base for company policies, playbooks, and documentation."
+
+    def _run(
+        self,
+        query: str,
+        domain: Optional[str] = None,
+        limit: int = 5,
+    ) -> KnowledgeSearchResponse:
+        """Search the cybersecurity knowledge base for relevant documents."""
+        return asyncio.run(self.search(query, domain, limit))
+
+    async def _arun(
+        self,
+        query: str,
+        domain: Optional[str] = None,
+        limit: int = 5,
+    ) -> KnowledgeSearchResponse:
+        """Search the cybersecurity knowledge base for relevant documents."""
+        return await self.search(query, domain, limit)
 
     async def search(
         self,
@@ -112,14 +133,3 @@ class KnowledgeSearchTool:
                 results=[],
                 error=f"An unexpected error occurred during the search: {e}",
             )
-
-
-# Create a singleton instance of the tool
-knowledge_search_tool = KnowledgeSearchTool()
-
-
-# Export function for easy use by the MCP server
-async def knowledge_search(**kwargs) -> Dict[str, Any]:
-    """Knowledge search function that MCP servers will import"""
-    response = await knowledge_search_tool.search(**kwargs)
-    return response.model_dump()

@@ -9,6 +9,8 @@ import logging
 from config.settings import settings
 import instructor
 from openai import AsyncOpenAI
+from langchain_core.tools import BaseTool
+import asyncio
 
 
 logger = logging.getLogger(__name__)
@@ -33,13 +35,31 @@ class WebSearchResponse(BaseModel):
     error: Optional[str] = Field(default=None, description="Error message if search failed")
 
 
-class WebSearchTool:
+class WebSearchTool(BaseTool):
     """Web search tool with LLM-enhanced query optimization."""
+    name: str = "web_search"
+    description: str = "Search the web with LLM-enhanced query optimization for better results."
 
     def __init__(self, llm_client: AsyncOpenAI):
         """Initialize Tavily and Instructor clients."""
         self.tavily = AsyncTavilyClient(api_key=settings.get_secret("tavily_api_key"))
         self.instructor = instructor.patch(llm_client)
+
+    def _run(
+        self,
+        query: str,
+        max_results: int = 5
+    ) -> WebSearchResponse:
+        """Search the web with LLM-enhanced query crafting."""
+        return asyncio.run(self.search(query, max_results))
+
+    async def _arun(
+        self,
+        query: str,
+        max_results: int = 5
+    ) -> WebSearchResponse:
+        """Search the web with LLM-enhanced query crafting."""
+        return await self.search(query, max_results)
 
     async def _craft_search_query(self, user_query: str) -> str:
         """
@@ -183,10 +203,3 @@ Return ONLY the enhanced search query, nothing else."""
                 total_results=0,
                 error=str(e)
             )
-
-# Export function for easy use
-async def web_search(**kwargs) -> Dict[str, Any]:
-    """Web search function that MCP servers will import"""
-    # This function will be called by the MCP server, which will manage the tool instance
-    # The tool instance will be created and passed in by the server
-    pass
