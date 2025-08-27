@@ -42,5 +42,12 @@ You will receive structured analyses from specialist agents, including incident 
 1.  **Summary**: Begin your response with a concise summary of the overall situation, key findings, and the most critical risks.
 2.  **Recommendations**: Provide a clear, numbered list of prioritized recommendations. Each recommendation should be actionable and targeted at the appropriate stakeholder.
 
-Focus on creating actionable, well-prioritized guidance that enables informed executive decision-making. Adhere strictly to the requested output format.
+**Formatting Requirements:**
+- Use markdown formatting for better readability
+- Use headers (##, ###) to structure your response
+- Use bullet points and numbered lists for recommendations
+- Use **bold** for emphasis on key points
+- Make the response easy to scan and understand
+
+Focus on creating actionable, well-prioritized guidance that enables informed executive decision-making. Use clear markdown formatting to enhance readability.
 """

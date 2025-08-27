@@ -41,7 +41,7 @@ class QualityGateSystem:
 
     @observe()
     async def validate_response(
-        self, query: str, response: str, agent_type: str, fail_open: bool = True
+        self, query: str, response: str, agent_type: str, context_info: dict = None, fail_open: bool = True
     ) -> QualityGateResult:
         """Validates an agent's response using a detailed, LLM-based evaluation."""
         langfuse = get_client()
@@ -53,12 +53,24 @@ class QualityGateSystem:
             return QualityGateResult(passed=True, overall_score=10.0, feedback="Langfuse offline.")
 
         evaluator_config = langfuse_config.create_agent_evaluator(agent_type)
+        
+        # Add context information to the evaluation if available
+        context_context = ""
+        if context_info:
+            context_context = f"""
+**Context Information:**
+- Is follow-up question: {context_info.get('is_follow_up', False)}
+- Context maintained: {context_info.get('context_maintained', True)}
+- Previous context: {context_info.get('previous_context', 'N/A')}
+
+"""
+        
         evaluation_prompt = VALIDATE_RESPONSE_PROMPT.format(
             query=query,
             response=response,
             agent_type=agent_type,
             evaluation_criteria=evaluator_config['prompt']
-        )
+        ) + context_context
         
         try:
             # The with_structured_output runnable handles parsing and retries.
@@ -67,6 +79,24 @@ class QualityGateSystem:
                 HumanMessage(content=evaluation_prompt)
             ]
             result = await self.quality_llm.ainvoke(evaluation_message)
+
+            # Log the evaluation results including scores
+            logger.info(f"--- Quality Evaluation Results ---")
+            logger.info(f"Agent Type: {agent_type}")
+            logger.info(f"Overall Score: {result.overall_score:.2f}")
+            logger.info(f"Passed: {result.passed}")
+            logger.info(f"Threshold: {evaluator_config.get('threshold', 'N/A')}")
+            
+            # Log individual scores if available
+            if result.scores:
+                logger.info(f"Individual Scores:")
+                for criterion, score in result.scores.items():
+                    logger.info(f"  - {criterion}: {score:.1f}/10")
+            else:
+                logger.info(f"Individual Scores: Not available")
+                
+            logger.info(f"Feedback: {result.feedback}")
+            logger.info(f"------------------------------------")
 
             langfuse.score_current_span(
                 name=f"{agent_type}_quality_score",

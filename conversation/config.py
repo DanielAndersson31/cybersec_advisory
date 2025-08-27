@@ -41,9 +41,9 @@ class ConversationConfig:
         self.redact_pii = False  # Set to True for production
         self.max_retention_days = None  # None = no limit
         
-        # Database and storage
+        # Database and storage (disabled for localStorage approach)
         self.db_path = "./conversations.db"
-        self.use_persistent_storage = True
+        self.use_persistent_storage = False  # Force in-memory for localStorage
     
     @classmethod
     def from_env(cls):

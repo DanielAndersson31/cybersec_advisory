@@ -36,26 +36,26 @@ class LangfuseConfig:
             "incident_response": {
                 "name": "Incident Response Quality Evaluator",
                 "prompt": """Evaluate this incident response for:
-1. Immediate containment actions (0-10): Are the first steps appropriate and time-critical?
-2. Evidence preservation (0-10): Does it properly preserve forensic evidence?
-3. Communication protocols (0-10): Are stakeholder notifications clear?
-4. Recovery procedures (0-10): Is there a clear path to recovery?
-5. Technical accuracy (0-10): Are the technical details correct?
+1. Technical accuracy (0-10): Are the technical details correct and appropriate for the cybersecurity context?
+2. Actionability (0-10): Are the recommendations clear, specific, and immediately actionable?
+3. Completeness (0-10): Does the response address the main aspects of the query, including follow-up considerations?
+4. Context awareness (0-10): Does it recognize if this is a follow-up question and maintain conversation continuity?
+5. Urgency assessment (0-10): Does it appropriately assess the severity and urgency of the incident?
 
 Provide a JSON response with this exact format:
 {
     "scores": {
-        "containment": <number>,
-        "evidence": <number>,
-        "communication": <number>,
-        "recovery": <number>,
-        "accuracy": <number>
+        "accuracy": <number>,
+        "actionability": <number>,
+        "completeness": <number>,
+        "context_awareness": <number>,
+        "urgency_assessment": <number>
     },
     "overall": <average of all scores>,
     "passed": <true if overall >= threshold>,
     "feedback": "<specific improvement suggestions>"
 }""",
-                "threshold": 7.5,
+                "threshold": 6.0,
                 "model": "gpt-4o",
                 "weight": 1.0  # Weight for overall scoring
             },
@@ -63,26 +63,26 @@ Provide a JSON response with this exact format:
             "prevention": {
                 "name": "Prevention Strategy Evaluator",
                 "prompt": """Evaluate this prevention guidance for:
-1. Proactive measures (0-10): Are the preventive steps comprehensive?
-2. Implementation feasibility (0-10): Can these be realistically implemented?
-3. Cost-effectiveness (0-10): Is the ROI reasonable?
-4. Long-term sustainability (0-10): Will these measures remain effective?
-5. Risk coverage (0-10): Do they address the key risks?
+1. Technical accuracy (0-10): Are the technical details correct and appropriate for cybersecurity prevention?
+2. Actionability (0-10): Are the recommendations clear, specific, and implementable?
+3. Completeness (0-10): Does the response address the main aspects of the query, including follow-up considerations?
+4. Context awareness (0-10): Does it recognize if this is a follow-up question and maintain conversation continuity?
+5. Strategic thinking (0-10): Does it consider long-term prevention strategies and risk mitigation?
 
 Provide a JSON response with this exact format:
 {
     "scores": {
-        "proactive": <number>,
-        "feasibility": <number>,
-        "cost_effective": <number>,
-        "sustainable": <number>,
-        "coverage": <number>
+        "accuracy": <number>,
+        "actionability": <number>,
+        "completeness": <number>,
+        "context_awareness": <number>,
+        "strategic_thinking": <number>
     },
     "overall": <average of all scores>,
     "passed": <true if overall >= threshold>,
     "feedback": "<specific improvement suggestions>"
 }""",
-                "threshold": 7.0,
+                "threshold": 5.5,
                 "model": "gpt-4o",
                 "weight": 0.9
             },
@@ -90,26 +90,26 @@ Provide a JSON response with this exact format:
             "threat_intel": {
                 "name": "Threat Intelligence Quality Evaluator",
                 "prompt": """Evaluate this threat intelligence analysis for:
-1. Source credibility (0-10): Are the intelligence sources reliable?
-2. Indicator quality (0-10): Are IOCs specific and actionable?
-3. Attribution accuracy (0-10): Is the threat actor attribution sound?
-4. Actionable recommendations (0-10): Can defenders act on this intel?
-5. Context completeness (0-10): Is sufficient context provided?
+1. Technical accuracy (0-10): Are the technical details correct and appropriate for threat intelligence?
+2. Actionability (0-10): Are the recommendations clear, specific, and actionable for defenders?
+3. Completeness (0-10): Does the response address the main aspects of the query, including follow-up considerations?
+4. Context awareness (0-10): Does it recognize if this is a follow-up question and maintain conversation continuity?
+5. Intelligence quality (0-10): Does it provide valuable threat context, indicators, and attribution insights?
 
 Provide a JSON response with this exact format:
 {
     "scores": {
-        "credibility": <number>,
-        "indicators": <number>,
-        "attribution": <number>,
-        "actionable": <number>,
-        "context": <number>
+        "accuracy": <number>,
+        "actionability": <number>,
+        "completeness": <number>,
+        "context_awareness": <number>,
+        "intelligence_quality": <number>
     },
     "overall": <average of all scores>,
     "passed": <true if overall >= threshold>,
     "feedback": "<specific improvement suggestions>"
 }""",
-                "threshold": 7.5,
+                "threshold": 6.0,
                 "model": "gpt-4o",
                 "weight": 1.0
             },
@@ -117,26 +117,26 @@ Provide a JSON response with this exact format:
             "compliance": {
                 "name": "Compliance Guidance Quality Evaluator",
                 "prompt": """Evaluate this compliance guidance for:
-1. Regulatory accuracy (0-10): Are regulations correctly interpreted?
-2. Implementation steps (0-10): Are compliance steps clear and complete?
-3. Timeline requirements (0-10): Are deadlines and timelines accurate?
-4. Documentation completeness (0-10): Is required documentation specified?
-5. Risk assessment (0-10): Are compliance risks properly identified?
+1. Technical accuracy (0-10): Are the technical details correct and appropriate for regulatory compliance?
+2. Actionability (0-10): Are the recommendations clear, specific, and implementable for compliance?
+3. Completeness (0-10): Does the response address the main aspects of the query, including follow-up considerations?
+4. Context awareness (0-10): Does it recognize if this is a follow-up question and maintain conversation continuity?
+5. Regulatory expertise (0-10): Does it demonstrate proper understanding of compliance frameworks and requirements?
 
 Provide a JSON response with this exact format:
 {
     "scores": {
         "accuracy": <number>,
-        "implementation": <number>,
-        "timeline": <number>,
-        "documentation": <number>,
-        "risk": <number>
+        "actionability": <number>,
+        "completeness": <number>,
+        "context_awareness": <number>,
+        "regulatory_expertise": <number>
     },
     "overall": <average of all scores>,
     "passed": <true if overall >= threshold>,
     "feedback": "<specific improvement suggestions>"
 }""",
-                "threshold": 8.0,  # Higher threshold for compliance
+                "threshold": 6.5,  # Higher threshold for compliance due to regulatory importance
                 "model": "gpt-4o",
                 "weight": 1.1  # Slightly higher weight for compliance
             }

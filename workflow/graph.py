@@ -89,6 +89,7 @@ class CybersecurityTeamGraph:
         workflow = StateGraph(WorkflowState)
         
         workflow.add_node("analyze", self.nodes.analyze_query)
+        workflow.add_node("check_context", self.nodes.check_context_continuity)
         workflow.add_node("general_response", self.nodes.general_response)
         workflow.add_node("direct_response", self.nodes.direct_response)
         workflow.add_node("consult_agent", self.nodes.consult_agent)
@@ -103,9 +104,12 @@ class CybersecurityTeamGraph:
         # Define the flow
         workflow.set_entry_point("analyze")
         
-        # Direct routing from analysis (no separate triage step needed)
+        # Direct routing from analysis to context check
+        workflow.add_edge("analyze", "check_context")
+        
+        # After context check, route based on strategy
         workflow.add_conditional_edges(
-            "analyze",
+            "check_context",
             self._route_by_strategy,
             {
                 "direct": "direct_response",
@@ -226,13 +230,14 @@ class CybersecurityTeamGraph:
         return "finish"
     
     @observe(name="team_response")
-    async def get_team_response(self, query: str, thread_id: str = "default") -> str:
+    async def get_team_response(self, query: str, thread_id: str = "default", conversation_history: list = None) -> str:
         """
         Get a response from the cybersecurity team.
         
         Args:
             query: User query
             thread_id: Conversation thread ID
+            conversation_history: List of previous conversation messages
             
         Returns:
             Team's response
@@ -262,7 +267,8 @@ class CybersecurityTeamGraph:
                 "rag_grounded": None,
                 "rag_relevance_score": None,
                 "error_count": 0,
-                "last_error": None
+                "last_error": None,
+                "conversation_history": conversation_history or []
             }
             
             # Run the workflow

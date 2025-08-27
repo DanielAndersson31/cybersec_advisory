@@ -59,6 +59,10 @@ class QualityGateResult(BaseModel):
     passed: bool = Field(description="Whether the quality gate passed.")
     feedback: str = Field(description="Detailed feedback on the quality of the response.")
     overall_score: float = Field(ge=0.0, le=10.0, description="Overall quality score from 0 to 10.")
+    scores: Optional[Dict[str, float]] = Field(
+        default=None, 
+        description="Individual scores for each evaluation criterion (e.g., accuracy, actionability, completeness)"
+    )
 
 class RAGRelevanceResult(BaseModel):
     """The result of a RAG relevance check."""
@@ -76,6 +80,14 @@ class CybersecurityClassification(BaseModel):
     is_cybersecurity_related: bool = Field(description="Whether the query is cybersecurity-related")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence score between 0 and 1")
     reasoning: str = Field(max_length=200, description="Brief explanation of the classification")
+
+class ContextContinuityCheck(BaseModel):
+    """Result of checking if a query maintains cybersecurity conversation context."""
+    is_follow_up: bool = Field(description="Whether this is a follow-up to a previous cybersecurity conversation")
+    context_maintained: bool = Field(description="Whether the cybersecurity context is maintained")
+    previous_context: Optional[str] = Field(default=None, description="Summary of previous cybersecurity context")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in the continuity assessment")
+    reasoning: str = Field(max_length=300, description="Explanation of the continuity assessment")
 
 class RoutingDecision(BaseModel):
     """The routing decision for a query."""

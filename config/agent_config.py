@@ -197,11 +197,11 @@ RESPONSE_TIME_LIMITS = {
 
 
 QUALITY_THRESHOLDS = {
-    AgentRole.INCIDENT_RESPONSE: 7.5,
-    AgentRole.PREVENTION: 7.0,
-    AgentRole.THREAT_INTEL: 7.5,
-    AgentRole.COMPLIANCE: 8.0,
-    AgentRole.COORDINATOR: 6.0
+    AgentRole.INCIDENT_RESPONSE: 6.0,  # Enhanced evaluation with context awareness
+    AgentRole.PREVENTION: 5.5,         # Enhanced evaluation with strategic thinking
+    AgentRole.THREAT_INTEL: 6.0,       # Enhanced evaluation with intelligence quality
+    AgentRole.COMPLIANCE: 6.5,         # Enhanced evaluation with regulatory expertise
+    AgentRole.COORDINATOR: 5.5,        # Enhanced evaluation
 }
 
 

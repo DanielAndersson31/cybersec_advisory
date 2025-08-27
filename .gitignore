@@ -136,3 +136,6 @@ data/
 downloads/
 exports/
 embedding_cache/
+
+# Domain Knowledge (contains sensitive company information)
+knowledge/domain_knowledge/

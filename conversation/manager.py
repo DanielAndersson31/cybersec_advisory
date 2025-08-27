@@ -41,14 +41,13 @@ class ConversationManager:
             "error_count": 0,
         }
     
-    async def initialize(self, use_persistent_storage: bool = None, db_path: str = None):
+    async def initialize(self, use_persistent_storage: bool = False, db_path: str = None):
         """
         Async initialization to set up checkpointer with configuration.
         Must be called before using the manager.
         """
-        # Use config defaults if not specified
-        use_persistent_storage = use_persistent_storage if use_persistent_storage is not None else self.config.use_persistent_storage
-        db_path = db_path or self.config.db_path
+        # Force in-memory storage for simplicity
+        use_persistent_storage = False
         
         # Initialize the store and get the checkpointer
         await self.store.initialize(persist=use_persistent_storage, db_path=db_path)
@@ -58,7 +57,7 @@ class ConversationManager:
             # Compile workflow with checkpointer
             self.workflow.compile_with_checkpointer(checkpointer)
             self.initialized = True
-            logger.info(f"Conversation manager initialized with checkpointer (persistent: {use_persistent_storage})")
+            logger.info(f"Conversation manager initialized with in-memory storage (localStorage for frontend)")
         else:
             logger.error("Failed to get checkpointer from state store.")
             self.initialized = False
@@ -96,10 +95,21 @@ class ConversationManager:
         history.add_user_message(message, entities=entities)
         
         try:
+            # Convert conversation history to the format expected by the workflow
+            conversation_history = []
+            for msg in history.messages:
+                conversation_history.append({
+                    "role": msg.role,
+                    "content": msg.content,
+                    "timestamp": msg.timestamp.isoformat(),
+                    "agent_used": msg.agent_used
+                })
+            
             # Get workflow response
             response = await self.workflow.get_team_response(
                 query=message,
-                thread_id=thread_id
+                thread_id=thread_id,
+                conversation_history=conversation_history
             )
             
             # Calculate processing time

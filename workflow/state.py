@@ -3,7 +3,7 @@ Workflow state definition for the cybersecurity team.
 Uses Pydantic for consistency and type safety.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from pydantic import Field
 from langgraph.graph import MessagesState
@@ -49,3 +49,6 @@ class WorkflowState(MessagesState):
     # Error handling
     error_count: int = 0
     last_error: Optional[str] = None
+    
+    # Conversation context
+    conversation_history: List[Dict[str, Any]] = Field(default_factory=list)

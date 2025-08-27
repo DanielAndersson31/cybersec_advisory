@@ -89,6 +89,95 @@ class WorkflowNodes:
                    f"(complexity: {routing_decision.estimated_complexity}) - {routing_decision.reasoning}")
         
         return state
+
+    @observe(name="check_context_continuity")
+    async def check_context_continuity(self, state: WorkflowState) -> WorkflowState:
+        """
+        Check if the current query maintains cybersecurity conversation context.
+        
+        This node analyzes whether the current query is a follow-up to a previous
+        cybersecurity conversation and maintains the appropriate context.
+        
+        Args:
+            state: Current workflow state
+            
+        Returns:
+            Updated state with context continuity information
+        """
+        logger.info(f"🔗 Checking context continuity for query: {state['query'][:100]}...")
+        
+        # Get conversation history from state
+        conversation_history = state.get("conversation_history", [])
+        
+        if not conversation_history:
+            # First query in conversation, no context to maintain
+            state["context_continuity"] = {
+                "is_follow_up": False,
+                "context_maintained": True,
+                "previous_context": None,
+                "confidence": 1.0,
+                "reasoning": "First query in conversation"
+            }
+            logger.info("✅ First query in conversation - no context to maintain")
+            return state
+        
+        # Analyze the last few messages for cybersecurity context
+        recent_messages = conversation_history[-3:]  # Last 3 messages for context
+        
+        # Create context analysis prompt
+        context_prompt = f"""
+        Analyze whether the current query maintains cybersecurity conversation context.
+        
+        **Recent Conversation History:**
+        {chr(10).join([f"- {msg.get('role', 'user')}: {msg.get('content', '')[:200]}..." for msg in recent_messages])}
+        
+        **Current Query:**
+        {state['query']}
+        
+        **Instructions:**
+        1. Determine if this is a follow-up to a previous cybersecurity conversation
+        2. Assess if the cybersecurity context is maintained
+        3. Provide confidence level and reasoning
+        
+        Respond in JSON format:
+        {{
+            "is_follow_up": <boolean>,
+            "context_maintained": <boolean>,
+            "previous_context": "<brief summary of previous cybersecurity context>",
+            "confidence": <float between 0-1>,
+            "reasoning": "<explanation of the assessment>"
+        }}
+        """
+        
+        try:
+            # Use the LLM to analyze context continuity
+            response = await self.llm_client.ainvoke([
+                SystemMessage(content="You are an expert at analyzing conversation context and continuity."),
+                HumanMessage(content=context_prompt)
+            ])
+            
+            # Parse the response
+            import json
+            context_result = json.loads(response.content)
+            
+            state["context_continuity"] = context_result
+            
+            logger.info(f"✅ Context continuity check: Follow-up={context_result['is_follow_up']}, "
+                       f"Context maintained={context_result['context_maintained']}, "
+                       f"Confidence={context_result['confidence']:.2f}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to analyze context continuity: {e}")
+            # Default to assuming context is maintained
+            state["context_continuity"] = {
+                "is_follow_up": True,
+                "context_maintained": True,
+                "previous_context": "Previous cybersecurity conversation",
+                "confidence": 0.7,
+                "reasoning": "Default assumption due to analysis failure"
+            }
+        
+        return state
     
     # Removed redundant triage_query - analysis now handles classification and routing decision
 
@@ -320,15 +409,15 @@ The web_search_tool is now generic and works for any type of query - you control
         # For now, let's assume the response can be cast or handled appropriately.
         final_report_structured = await self.coordinator.respond(messages=[{"role": "user", "content": coordination_context}])
 
-        # Format the final report into a user-friendly string
-        final_answer = f"### Executive Summary\n{final_report_structured.summary}\n\n"
+        # Format the final report into a user-friendly markdown string
+        final_answer = f"## Executive Summary\n\n{final_report_structured.summary}\n\n"
         
         # This part needs adjustment based on how FinalReport is returned
         # Assuming summary contains the exec summary and recommendations the prioritized list
         if final_report_structured.recommendations:
-            final_answer += "### Prioritized Recommendations\n"
+            final_answer += "## Prioritized Recommendations\n\n"
             for i, rec in enumerate(final_report_structured.recommendations, 1):
-                final_answer += f"{i}. {rec}\n"
+                final_answer += f"**{i}.** {rec}\n\n"
 
         state["final_answer"] = final_answer
         state["messages"].append(AIMessage(content=state["final_answer"]))
@@ -357,7 +446,7 @@ The web_search_tool is now generic and works for any type of query - you control
             synthesis_prompt = f"""
 You are an expert at communicating cybersecurity advice. Your task is to rewrite the following structured analysis from a specialist into a single, cohesive, and easy-to-read response for the end-user.
 
-**Do not use markdown headers like "Summary" or "Recommendations".** Instead, weave the information together into a natural, paragraph-based format. Start with the main conclusion and then smoothly integrate the actionable advice.
+**Use markdown formatting for better readability.** Structure your response with clear headers, bullet points, and emphasis where appropriate. Make it easy to scan and understand.
 
 **Specialist's Analysis:**
 ---
@@ -368,7 +457,7 @@ You are an expert at communicating cybersecurity advice. Your task is to rewrite
 {', '.join(recommendations)}
 ---
 
-Rewrite the above analysis into a clear, natural-sounding response.
+Rewrite the above analysis into a clear, well-formatted markdown response with appropriate headers, bullet points, and emphasis.
 """
             
             llm_response = await self.llm_client.ainvoke([HumanMessage(content=synthesis_prompt)])
@@ -376,12 +465,12 @@ Rewrite the above analysis into a clear, natural-sounding response.
             state["final_answer"] = final_answer
         
         else:
-            # For multiple agents, create a consolidated view
-            combined_summary = "Based on our team's analysis, here is a consolidated view:\n\n"
+            # For multiple agents, create a consolidated view with markdown formatting
+            combined_summary = "## Team Analysis Summary\n\nBased on our team's analysis, here is a consolidated view:\n\n"
             combined_recommendations = []
             
             for resp in state["team_responses"]:
-                combined_summary += f"**{resp.agent_name}'s Perspective ({resp.agent_role.value}):**\n"
+                combined_summary += f"### {resp.agent_name} ({resp.agent_role.value})\n\n"
                 combined_summary += f"{resp.response.summary}\n\n"
                 if resp.response.recommendations:
                     for rec in resp.response.recommendations:
@@ -391,9 +480,9 @@ Rewrite the above analysis into a clear, natural-sounding response.
 
             final_answer = f"{combined_summary}"
             if combined_recommendations:
-                final_answer += "\n**Consolidated Recommendations:**\n"
+                final_answer += "## Consolidated Recommendations\n\n"
                 for rec in combined_recommendations:
-                    final_answer += f"- {rec}\n"
+                    final_answer += f"• **{rec}**\n\n"
             
             state["final_answer"] = final_answer
         
@@ -445,22 +534,37 @@ Rewrite the above analysis into a clear, natural-sounding response.
         else:
             agent_type = "incident_response"  # Default for cybersecurity queries
         
-        # Run quality validation
+        # Get context continuity information
+        context_continuity = state.get("context_continuity", {})
+        is_follow_up = context_continuity.get("is_follow_up", False)
+        context_maintained = context_continuity.get("context_maintained", True)
+        
+        # Run quality validation with context awareness
         quality_result = await self.quality_system.validate_response(
             query=state["query"],
             response=state["final_answer"],
-            agent_type=agent_type
+            agent_type=agent_type,
+            context_info={
+                "is_follow_up": is_follow_up,
+                "context_maintained": context_maintained,
+                "previous_context": context_continuity.get("previous_context")
+            }
         )
         
         state["quality_passed"] = quality_result.passed
         state["quality_score"] = quality_result.overall_score
         
-        # Define a realistic quality threshold
-        QUALITY_THRESHOLD = 7.0
+        # Get agent-specific quality threshold
+        from config.agent_config import get_quality_threshold, AgentRole
+        try:
+            agent_role = AgentRole(agent_type)
+            quality_threshold = get_quality_threshold(agent_role)
+        except (ValueError, KeyError):
+            quality_threshold = 7.0  # Fallback threshold
         
         # If quality score is below threshold and we haven't retried too much, enhance the response
-        if quality_result.overall_score < QUALITY_THRESHOLD and state["error_count"] < 2:
-            logger.info(f"Quality check failed (score: {quality_result.overall_score:.2f} < {QUALITY_THRESHOLD}), enhancing response...")
+        if quality_result.overall_score < quality_threshold and state["error_count"] < 2:
+            logger.info(f"Quality check failed (score: {quality_result.overall_score:.2f} < {quality_threshold}), enhancing response...")
             state["quality_passed"] = False # Explicitly mark as failed before enhancement
             
             enhanced_response = await self.quality_system.enhance_response(
