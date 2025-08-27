@@ -11,13 +11,13 @@ from openai import AsyncOpenAI
 from config.settings import settings # Import the Pydantic settings
 from cybersec_mcp.tools import (
     WebSearchTool,
-    knowledge_search,
-    analyze_indicators,
-    search_vulnerabilities,
-    analyze_attack_surface,
-    search_threat_feeds,
-    get_compliance_guidance,
-    check_exposure
+    KnowledgeSearchTool,
+    IOCAnalysisTool,
+    VulnerabilitySearchTool,
+    AttackSurfaceAnalyzerTool,
+    ThreatFeedsTool,
+    ComplianceGuidanceTool,
+    ExposureCheckerTool
 )
 
 # Configure logging
@@ -107,13 +107,13 @@ async def search_knowledge_base(
     """
     try:
         logger.info(f"Knowledge base search: {query} (domain: {domain})")
-        result = await knowledge_search(
+        result = await KnowledgeSearchTool().search(
             query=query,
             domain=domain,
             limit=limit
         )
-        logger.info(f"Knowledge search completed: {len(result.get('results', []))} results")
-        return result
+        logger.info(f"Knowledge search completed: {len(result.results)} results")
+        return result.model_dump()
     except Exception as e:
         logger.error(f"Knowledge search error for query '{query}': {str(e)}")
         return {
@@ -150,21 +150,15 @@ async def analyze_ioc(
     """
     try:
         logger.info(f"IOC analysis started: {len(indicators)} indicators")
-        result = await analyze_indicators(
-            indicators=indicators,
-            check_reputation=check_reputation,
-            enrich_data=enrich_data,
-            include_context=include_context
-        )
+        result = await IOCAnalysisTool().analyze_indicators(indicators=indicators)
         
         # Log summary
-        if result.get("status") == "success":
-            results = result.get("results", [])
-            malicious = len([r for r in results if r.get("classification") == "malicious"])
-            suspicious = len([r for r in results if r.get("classification") == "suspicious"])
+        if result.status == "success":
+            malicious = len([r for r in result.results if r.classification == "malicious"])
+            suspicious = len([r for r in result.results if r.classification == "suspicious"])
             logger.info(f"IOC analysis completed: {malicious} malicious, {suspicious} suspicious")
         
-        return result
+        return result.model_dump()
     except Exception as e:
         logger.error(f"IOC analysis error: {str(e)}")
         return {
@@ -188,8 +182,8 @@ async def exposure_checker_tool(email: str) -> dict:
         A dictionary containing the exposure check results.
     """
     logger.info(f"Checking exposure for email: {email}")
-    response = await check_exposure(email=email)
-    return response
+    response = await ExposureCheckerTool().check(email=email)
+    return response.model_dump()
 
 
 # =============================================================================
@@ -215,17 +209,16 @@ async def get_threat_feeds(
     """
     try:
         logger.info(f"Threat intelligence search: {query} (details: {fetch_full_details})")
-        result = await search_threat_feeds(
+        result = await ThreatFeedsTool().search(
             query=query,
             limit=limit,
             fetch_full_details=fetch_full_details
         )
         
-        if result.get("status") == "success":
-            total_results = result.get("total_results", 0)
-            logger.info(f"Threat intelligence search completed: {total_results} reports found")
+        if result.status == "success":
+            logger.info(f"Threat intelligence search completed: {result.total_results} reports found")
         
-        return result
+        return result.model_dump()
     except Exception as e:
         logger.error(f"Threat intelligence search error for '{query}': {str(e)}")
         return {
@@ -245,10 +238,10 @@ async def get_threat_feeds(
 async def find_vulnerabilities(
     query: str,
     severity_filter: Optional[List[str]] = None,
+    include_patched: bool = False,
     date_range: Optional[str] = None,
-    product_filter: Optional[str] = None,
-    include_patched: bool = True,
-    limit: int = 20
+    limit: int = 20,
+    exact_phrase: bool = False,
 ) -> Dict[str, Any]:
     """
     Search CVE databases for vulnerabilities affecting specific products or technologies.
@@ -256,31 +249,30 @@ async def find_vulnerabilities(
     Args:
         query: Search query for vulnerabilities (product name, CVE ID, etc.)
         severity_filter: Filter by severity levels (["LOW", "MEDIUM", "HIGH", "CRITICAL"])
-        date_range: Date range for vulnerability publication (e.g., "2024-01-01:2024-12-31")
-        product_filter: Filter by specific product name
-        include_patched: Include vulnerabilities that have been patched (default: True)
+        include_patched: Whether to include vulnerabilities that are already patched
+        date_range: Date range for vulnerability publication (e.g., "week", "month", "year")
         limit: Maximum number of vulnerabilities to return (default: 20)
+        exact_phrase: If True, search for the exact phrase instead of individual words.
     
     Returns:
         Dict containing vulnerability search results with CVE details and CVSS scores
     """
     try:
         logger.info(f"Vulnerability search: {query} (limit: {limit})")
-        result = await search_vulnerabilities(
+        result = await VulnerabilitySearchTool().search(
             query=query,
             severity_filter=severity_filter,
-            date_range=date_range,
-            product_filter=product_filter,
             include_patched=include_patched,
-            limit=limit
+            date_range=date_range,
+            limit=limit,
+            exact_phrase=exact_phrase,
         )
         
-        if result.get("status") == "success":
-            total_results = result.get("total_results", 0)
-            critical = len([v for v in result.get("results", []) if v.get("severity") == "CRITICAL"])
-            logger.info(f"Vulnerability search completed: {total_results} total, {critical} critical")
+        if result.status == "success":
+            critical = len([v for v in result.results if v.severity == "CRITICAL"])
+            logger.info(f"Vulnerability search completed: {result.total_results} total, {critical} critical")
         
-        return result
+        return result.model_dump()
     except Exception as e:
         logger.error(f"Vulnerability search error for '{query}': {str(e)}")
         return {
@@ -305,13 +297,12 @@ async def scan_attack_surface(host: str) -> Dict[str, Any]:
     """
     try:
         logger.info(f"Attack surface analysis: {host}")
-        result = await analyze_attack_surface(host=host)
+        result = await AttackSurfaceAnalyzerTool().analyze(host=host)
         
-        if result.get("status") == "success":
-            open_ports = len(result.get("open_ports", []))
-            logger.info(f"Attack surface analysis completed: {open_ports} open ports found")
+        if result.status == "success":
+            logger.info(f"Attack surface analysis completed: {len(result.open_ports)} open ports found")
         
-        return result
+        return result.model_dump()
     except Exception as e:
         logger.error(f"Attack surface analysis error for {host}: {str(e)}")
         return {
@@ -350,7 +341,7 @@ async def compliance_guidance(
     """
     try:
         logger.info(f"Compliance guidance request: {framework}")
-        result = get_compliance_guidance(
+        result = await ComplianceGuidanceTool().get_guidance(
             framework=framework,
             data_type=data_type,
             region=region,

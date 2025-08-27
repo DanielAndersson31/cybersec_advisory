@@ -36,7 +36,7 @@ class AttackSurfaceAnalyzerTool(BaseTool):
     name: str = "attack_surface_analyzer"
     description: str = "Analyzes the attack surface of a domain or IP address."
     api_key: str = Field(default_factory=lambda: settings.get_secret("zoomeye_api_key"))
-    base_url: str = "https://api.zoomeye.org"
+    base_url: str = "https://api.zoomeye.ai"
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -49,9 +49,10 @@ class AttackSurfaceAnalyzerTool(BaseTool):
 
     async def _arun(self, host: str) -> Dict[str, Any]:
         """Analyzes a host (IP or domain) using the ZoomEye API."""
-        return await self.analyze(host)
+        result = await self.analyze(host)
+        return result.model_dump()
 
-    async def analyze(self, host: str) -> Dict[str, Any]:
+    async def analyze(self, host: str) -> AttackSurfaceResponse:
         """
         Analyzes a host (IP or domain) using the ZoomEye API.
         
@@ -62,16 +63,41 @@ class AttackSurfaceAnalyzerTool(BaseTool):
             An AttackSurfaceResponse with details of the host's exposure.
         """
         async with httpx.AsyncClient() as client:
-            # ZoomEye's primary search endpoint for hosts
+            # Extract hostname from URL if needed
+            hostname = self._extract_hostname(host)
+            
+            # ZoomEye's API uses GET requests with query parameters
             url = f"{self.base_url}/host/search"
             headers = {"API-KEY": self.api_key}
-            # ZoomEye uses a query string format
-            params = {"query": f'ip:"{host}" or hostname:"{host}"', "page": 1}
+            
+            # Build query parameters
+            params = {
+                "query": f'ip:"{hostname}"' if self._is_ip(hostname) else f'hostname:"{hostname}"',
+                "page": 1
+            }
             
             try:
-                # Make the API request
+                # Make the API request using GET
                 api_response = await client.get(url, headers=headers, params=params)
                 
+                if api_response.status_code == 402:
+                    data = api_response.json()
+                    if data.get("code") == "credits_insufficent":
+                        return AttackSurfaceResponse(
+                            status="error",
+                            query_host=host,
+                            ip_address="",
+                            error="ZoomEye API Error: Insufficient credits. Please check your ZoomEye account plan and usage."
+                        )
+
+                if api_response.status_code == 401:
+                    return AttackSurfaceResponse(
+                        status="error",
+                        query_host=host,
+                        ip_address="",
+                        error="ZoomEye API Error: Unauthorized. Please check your API key."
+                    )
+
                 if api_response.status_code != 200:
                     return AttackSurfaceResponse(
                         status="error",
@@ -87,29 +113,44 @@ class AttackSurfaceAnalyzerTool(BaseTool):
                 if not matches:
                     return AttackSurfaceResponse(
                         query_host=host,
-                        ip_address=host, # Assume host is IP if no results
+                        ip_address=hostname if self._is_ip(hostname) else "",
                         status="success", # It's a success, just no data found
                         error="Host not found in ZoomEye database."
                     )
 
-                # We'll use the first match as the primary source of info
-                main_match = matches[0]
+                # Process all matches to get comprehensive port information
                 port_details = []
-                if main_match.get("portinfo"):
-                    port_details.append(OpenPortInfo(
-                        port=main_match["portinfo"].get("port"),
-                        service=main_match["portinfo"].get("service"),
-                        banner=main_match["portinfo"].get("banner", "")[:200] + "..." # Truncate long banners
-                    ))
+                main_match = matches[0]
+                ip_address = main_match.get("ip", "")
+                organization = main_match.get("organization", "N/A")
+                country = main_match.get("geoinfo", {}).get("country", {}).get("name", "N/A")
+
+                # Collect ports from all matches for this host
+                for match in matches:
+                    if match.get("portinfo"):
+                        port_info = match["portinfo"]
+                        port_details.append(OpenPortInfo(
+                            port=port_info.get("port", 0),
+                            service=port_info.get("service", "unknown"),
+                            banner=(port_info.get("banner", "")[:200] + "...") if len(port_info.get("banner", "")) > 200 else port_info.get("banner", "")
+                        ))
 
                 return AttackSurfaceResponse(
                     query_host=host,
-                    ip_address=main_match.get("ip", ""),
-                    organization=main_match.get("organization", "N/A"),
-                    country=main_match.get("geoinfo", {}).get("country", {}).get("name", "N/A"),
+                    ip_address=ip_address,
+                    organization=organization,
+                    country=country,
                     open_ports=port_details
                 )
 
+            except httpx.HTTPError as e:
+                logger.error(f"HTTP error during attack surface analysis: {str(e)}")
+                return AttackSurfaceResponse(
+                    status="error",
+                    query_host=host,
+                    ip_address="",
+                    error=f"Network error: {str(e)}"
+                )
             except Exception as e:
                 logger.error(f"Attack surface analysis error: {str(e)}")
                 return AttackSurfaceResponse(
@@ -118,3 +159,17 @@ class AttackSurfaceAnalyzerTool(BaseTool):
                     ip_address="",
                     error=str(e)
                 )
+
+    def _extract_hostname(self, host: str) -> str:
+        """Extract hostname from a full URL or return the host as-is."""
+        if host.startswith(('http://', 'https://')):
+            from urllib.parse import urlparse
+            parsed = urlparse(host)
+            return parsed.hostname or parsed.netloc
+        return host
+
+    def _is_ip(self, host: str) -> bool:
+        """Check if the host is an IP address."""
+        import re
+        ipv4_pattern = r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+        return bool(re.match(ipv4_pattern, host))

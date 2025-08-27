@@ -89,7 +89,7 @@ class ComplianceGuidanceTool(BaseTool):
         incident_type: Optional[str] = None
     ) -> ComplianceGuidanceResponse:
         """Get compliance guidance for specific framework or situation."""
-        return self.get_guidance(framework, data_type, region, incident_type)
+        return await self.get_guidance(framework, data_type, region, incident_type)
 
     # === Private Helper Methods ===
     
@@ -126,7 +126,7 @@ class ComplianceGuidanceTool(BaseTool):
     
     # === Main Tool Methods ===
     
-    def get_guidance(
+    async def get_guidance(
         self,
         framework: Optional[str] = None,
         data_type: Optional[str] = None,

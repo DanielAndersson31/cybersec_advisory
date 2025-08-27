@@ -10,8 +10,8 @@ from pydantic import BaseModel
 from langchain_core.tools import BaseTool
 import asyncio
 
-# Correctly import the application's KnowledgeRetriever
-from knowledge.knowledge_retrieval import knowledge_retriever
+# Use lazy import to avoid circular dependency
+# from knowledge.knowledge_retrieval import knowledge_retriever
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,9 @@ class KnowledgeSearchTool(BaseTool):
             A KnowledgeSearchResponse object.
         """
         try:
+            # Lazy import to avoid circular dependency
+            from knowledge.knowledge_retrieval import knowledge_retriever
+            
             domains_to_search = []
             if domain:
                 domains_to_search.append(domain)
@@ -82,7 +85,7 @@ class KnowledgeSearchTool(BaseTool):
                 # If no domain is specified, search all available collections
                 domains_to_search = await knowledge_retriever.store_manager.get_all_collection_names()
                 logger.info(f"Searching across all domains for: '{query}'")
-
+            
             if not domains_to_search:
                 return KnowledgeSearchResponse(
                     status="info", 

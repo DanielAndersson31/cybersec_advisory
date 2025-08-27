@@ -4,10 +4,9 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
 from fastembed import TextEmbedding
-from qdrant_client import QdrantClient, models
+from qdrant_client import QdrantClient, models, AsyncQdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 
-from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,16 +25,25 @@ class VectorStoreManager:
     Manages interactions with the Qdrant vector store using FastEmbed.
     Optimized for cybersecurity knowledge retrieval.
     """
-    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5"):
+    def __init__(self, qdrant_url: str, qdrant_api_key: Optional[str], model_name: str = "BAAI/bge-small-en-v1.5"):
         """
         Initializes the Qdrant client and the FastEmbed embedding model.
         
         Args:
+            qdrant_url: The URL for the Qdrant instance.
+            qdrant_api_key: The API key for the Qdrant instance.
             model_name: FastEmbed model to use (default: bge-small for speed/quality balance)
         """
+        # The async client is needed for async operations like get_collections
+        self.async_client = AsyncQdrantClient(
+            url=qdrant_url,
+            api_key=qdrant_api_key,
+            timeout=30
+        )
+        # The sync client is better suited for CPU-bound sync operations like upsert
         self.client = QdrantClient(
-            url=settings.qdrant_url,
-            api_key=settings.get_secret("qdrant_api_key"),
+            url=qdrant_url,
+            api_key=qdrant_api_key,
             timeout=30  # Add timeout for production
         )
         
@@ -54,7 +62,7 @@ class VectorStoreManager:
     async def get_all_collection_names(self) -> List[str]:
         """Retrieve a list of all collection names from Qdrant."""
         try:
-            collections_response = await self.client.get_collections()
+            collections_response = await self.async_client.get_collections()
             return [col.name for col in collections_response.collections]
         except Exception as e:
             logger.exception(f"Failed to retrieve collection names: {e}")
@@ -76,6 +84,7 @@ class VectorStoreManager:
             collection_name: The name for the collection
         """
         try:
+            # Using the sync client is generally fine for this check
             collections_response = self.client.get_collections()
             existing_collections = [col.name for col in collections_response.collections]
             
@@ -191,8 +200,8 @@ class VectorStoreManager:
             # Embed query manually for full control
             query_embedding = list(self.embedding_model.embed([query_with_prefix]))[0]
             
-            # Search with embedded vector
-            hits = self.client.search(
+            # Search with embedded vector using the async client
+            hits = await self.async_client.search(
                 collection_name=collection_name,
                 query_vector=query_embedding.tolist() if hasattr(query_embedding, 'tolist') else list(query_embedding),
                 query_filter=filter_dict,  # Add filtering if provided

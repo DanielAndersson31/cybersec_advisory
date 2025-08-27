@@ -73,6 +73,24 @@ class IOCAnalysisTool(BaseTool):
         """Analyze a single indicator using VirusTotal."""
         return await self.analyze_indicator(indicator)
 
+    async def analyze_indicators(self, indicators: List[str]) -> IOCAnalysisResponse:
+        """
+        Analyze a list of indicators concurrently.
+        
+        Args:
+            indicators: A list of indicators to analyze.
+            
+        Returns:
+            An IOCAnalysisResponse object with the analysis findings for all indicators.
+        """
+        tasks = [self.analyze_indicator(indicator) for indicator in indicators]
+        results = await asyncio.gather(*tasks)
+        
+        return IOCAnalysisResponse(
+            total_indicators=len(indicators),
+            results=results
+        )
+
     async def analyze_indicator(self, indicator: str) -> IOCResult:
         """
         Analyze a single indicator using VirusTotal.

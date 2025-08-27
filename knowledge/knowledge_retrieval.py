@@ -1,6 +1,7 @@
 import logging
 from typing import List, Dict, Any
 from .vector_store import VectorStoreManager
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +12,10 @@ class KnowledgeRetriever:
     """
     def __init__(self):
         """Initializes the retriever with a VectorStoreManager instance."""
-        self.store_manager = VectorStoreManager()
+        self.store_manager = VectorStoreManager(
+            qdrant_url=settings.qdrant_url,
+            qdrant_api_key=settings.get_secret("qdrant_api_key")
+        )
         logger.info("KnowledgeRetriever initialized.")
 
     async def search(self, query: str, domain: str, k: int = 5) -> List[Dict[str, Any]]:

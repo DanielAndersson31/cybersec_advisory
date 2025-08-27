@@ -8,6 +8,7 @@ from langchain_community.document_loaders import (
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from knowledge.vector_store import VectorStoreManager, Document
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,10 @@ async def main():
     """
     logger.info("Starting knowledge base setup process...")
     try:
-        store_manager = VectorStoreManager()
+        store_manager = VectorStoreManager(
+            qdrant_url=settings.qdrant_url,
+            qdrant_api_key=settings.get_secret("qdrant_api_key")
+        )
         knowledge_base_path = pathlib.Path(__file__).parent.parent / "knowledge" / "domain_knowledge"
 
         # Dynamically find all subdirectories to use as knowledge domains
