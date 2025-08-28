@@ -40,10 +40,8 @@ class CybersecurityTeamGraph:
             max_tokens=4000
         )
 
-        # Create all agents using the factory (much simpler now!)
         self.factory = AgentFactory(llm_client=llm_client)
         
-        # Initialize workflow components
         self.toolkit = CybersecurityToolkit()
         self.nodes = WorkflowNodes(
             agent_factory=self.factory,
@@ -102,14 +100,14 @@ class CybersecurityTeamGraph:
             workflow.add_node("rag_quality", self.nodes.check_rag_quality)
         
         # Define the flow
-        workflow.set_entry_point("analyze")
+        workflow.set_entry_point("check_context")
         
-        # Direct routing from analysis to context check
-        workflow.add_edge("analyze", "check_context")
+        # After context check, go to analysis
+        workflow.add_edge("check_context", "analyze")
         
-        # After context check, route based on strategy
+        # After analysis, route based on strategy
         workflow.add_conditional_edges(
-            "check_context",
+            "analyze",
             self._route_by_strategy,
             {
                 "direct": "direct_response",
@@ -230,18 +228,19 @@ class CybersecurityTeamGraph:
         return "finish"
     
     @observe(name="team_response")
-    async def get_team_response(self, query: str, thread_id: str = "default", conversation_history: list = None) -> str:
+    async def get_team_response(self, initial_state: dict, thread_id: str = "default", conversation_history: list = None) -> dict:
         """
         Get a response from the cybersecurity team.
         
         Args:
-            query: User query
+            initial_state: The initial state for this turn, including query and any persisted context
             thread_id: Conversation thread ID
             conversation_history: List of previous conversation messages
             
         Returns:
             Team's response
         """
+        logger.info(f"--- Running New Workflow --- Query: '{initial_state.get('query')}' --- Thread: {thread_id} ---")
         # Check if workflow has been compiled
         if self.app is None:
             raise RuntimeError(
@@ -250,9 +249,9 @@ class CybersecurityTeamGraph:
             )
         
         try:
-            # Initialize state
-            initial_state = {
-                "query": query,
+            # ---> FIX: Merge the passed initial_state with the default state structure <---
+            state = {
+                "query": initial_state.get("query"),
                 "thread_id": thread_id,
                 "response_strategy": None,
                 "estimated_complexity": None,
@@ -268,18 +267,25 @@ class CybersecurityTeamGraph:
                 "rag_relevance_score": None,
                 "error_count": 0,
                 "last_error": None,
-                "conversation_history": conversation_history or []
+                "conversation_history": conversation_history or [],
+                # Carry over persisted context
+                "active_agent": initial_state.get("active_agent"),
+                "conversation_context": initial_state.get("conversation_context")
             }
             
             # Run the workflow
             config = {"configurable": {"thread_id": thread_id}}
-            result = await self.app.ainvoke(initial_state, config)
+            result = await self.app.ainvoke(state, config)
             
-            return result.get("final_answer", "I apologize, but I couldn't generate a response.")
+            return result
             
         except Exception as e:
             logger.error(f"Workflow error: {e}")
-            return self.error_handler.get_fallback_response(str(e))
+            return {
+                "final_answer": self.error_handler.get_fallback_response(str(e)),
+                "error_count": 1,
+                "last_error": str(e)
+            }
     
     def is_compiled(self) -> bool:
         """
@@ -304,8 +310,8 @@ class CybersecurityTeamGraph:
             return None
         
         config = {"configurable": {"thread_id": thread_id}}
-        state = await self.app.aget_state(config)
-        return state.values if state else None
+        snapshot = await self.app.aget_state(config)
+        return snapshot
     
     async def update_state(self, thread_id: str, updates: dict):
         """

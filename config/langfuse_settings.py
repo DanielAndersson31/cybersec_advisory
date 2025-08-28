@@ -30,84 +30,105 @@ class LangfuseConfig:
         print(f"Langfuse client initialized at {self.initialized_at}")
     
     def get_evaluator_prompts(self) -> Dict[str, Dict[str, Any]]:
-        """Define evaluation prompts and thresholds for each agent type"""
+        """Define role-specific evaluation prompts and thresholds for each agent type"""
         
         return {
             "incident_response": {
-                "name": "Incident Response Quality Evaluator",
-                "prompt": """Evaluate this incident response for:
-1. Technical accuracy (0-10): Are the technical details correct and appropriate for the cybersecurity context?
-2. Actionability (0-10): Are the recommendations clear, specific, and immediately actionable?
-3. Completeness (0-10): Does the response address the main aspects of the query, including follow-up considerations?
-4. Context awareness (0-10): Does it recognize if this is a follow-up question and maintain conversation continuity?
-5. Urgency assessment (0-10): Does it appropriately assess the severity and urgency of the incident?
+                "name": "Incident Response Specialist Evaluator",
+                "prompt": """Evaluate this incident response specialist's performance:
 
-Provide a JSON response with this exact format:
+**Role Context**: Active incident response, threat containment, forensic analysis
+**Expected Tools**: ioc_analysis, exposure_checker, knowledge_search, web_search  
+**Core Responsibilities**: Immediate threats, containment actions, breach investigation
+
+**Evaluation Criteria (0-10 each):**
+
+1. **Role Appropriateness**: Does the response focus on active incident response rather than prevention/architecture?
+2. **Tool Usage**: Are appropriate tools used (IOC analysis, exposure checking) when investigating threats?  
+3. **Technical Accuracy**: Are incident response procedures and threat assessments technically sound?
+4. **Action Orientation**: Are recommendations immediate, decisive, and focused on containment?
+5. **Collaboration**: Are proper handoffs suggested (e.g., to Prevention for architecture, to Threat Intel for attribution)?
+
+**Provide JSON response:**
 {
     "scores": {
-        "accuracy": <number>,
-        "actionability": <number>,
-        "completeness": <number>,
-        "context_awareness": <number>,
-        "urgency_assessment": <number>
+        "role_appropriateness": <number>,
+        "tool_usage": <number>, 
+        "technical_accuracy": <number>,
+        "action_orientation": <number>,
+        "collaboration": <number>
     },
     "overall": <average of all scores>,
-    "passed": <true if overall >= threshold>,
-    "feedback": "<specific improvement suggestions>"
+    "passed": <true if overall >= 6.0>,
+    "feedback": "<specific improvement suggestions focusing on incident response expertise>"
 }""",
                 "threshold": 6.0,
                 "model": "gpt-4o",
-                "weight": 1.0  # Weight for overall scoring
+                "weight": 1.0
             },
             
             "prevention": {
-                "name": "Prevention Strategy Evaluator",
-                "prompt": """Evaluate this prevention guidance for:
-1. Technical accuracy (0-10): Are the technical details correct and appropriate for cybersecurity prevention?
-2. Actionability (0-10): Are the recommendations clear, specific, and implementable?
-3. Completeness (0-10): Does the response address the main aspects of the query, including follow-up considerations?
-4. Context awareness (0-10): Does it recognize if this is a follow-up question and maintain conversation continuity?
-5. Strategic thinking (0-10): Does it consider long-term prevention strategies and risk mitigation?
+                "name": "Prevention Specialist Evaluator", 
+                "prompt": """Evaluate this prevention specialist's performance:
 
-Provide a JSON response with this exact format:
+**Role Context**: Proactive security architecture, vulnerability management, risk mitigation
+**Expected Tools**: vulnerability_search, threat_feeds, knowledge_search, web_search
+**Core Responsibilities**: Strategic security controls, vulnerability management, architectural guidance
+
+**Evaluation Criteria (0-10 each):**
+
+1. **Role Appropriateness**: Does the response focus on proactive prevention rather than incident response?
+2. **Tool Usage**: Are vulnerability search and threat feeds used appropriately for strategic guidance?
+3. **Technical Accuracy**: Are architectural recommendations and vulnerability assessments sound?
+4. **Strategic Thinking**: Does the guidance consider long-term security posture and risk mitigation?
+5. **Collaboration**: Are handoffs suggested when prevention identifies critical issues requiring incident response?
+
+**Provide JSON response:**
 {
     "scores": {
-        "accuracy": <number>,
-        "actionability": <number>,
-        "completeness": <number>,
-        "context_awareness": <number>,
-        "strategic_thinking": <number>
+        "role_appropriateness": <number>,
+        "tool_usage": <number>,
+        "technical_accuracy": <number>, 
+        "strategic_thinking": <number>,
+        "collaboration": <number>
     },
     "overall": <average of all scores>,
-    "passed": <true if overall >= threshold>,
-    "feedback": "<specific improvement suggestions>"
+    "passed": <true if overall >= 5.5>,
+    "feedback": "<specific improvement suggestions focusing on prevention expertise>"
 }""",
                 "threshold": 5.5,
-                "model": "gpt-4o",
+                "model": "gpt-4o", 
                 "weight": 0.9
             },
             
             "threat_intel": {
-                "name": "Threat Intelligence Quality Evaluator",
-                "prompt": """Evaluate this threat intelligence analysis for:
-1. Technical accuracy (0-10): Are the technical details correct and appropriate for threat intelligence?
-2. Actionability (0-10): Are the recommendations clear, specific, and actionable for defenders?
-3. Completeness (0-10): Does the response address the main aspects of the query, including follow-up considerations?
-4. Context awareness (0-10): Does it recognize if this is a follow-up question and maintain conversation continuity?
-5. Intelligence quality (0-10): Does it provide valuable threat context, indicators, and attribution insights?
+                "name": "Threat Intelligence Specialist Evaluator",
+                "prompt": """Evaluate this threat intelligence specialist's performance:
 
-Provide a JSON response with this exact format:
+**Role Context**: Threat actor analysis, campaign tracking, strategic intelligence  
+**Expected Tools**: threat_feeds, ioc_analysis, knowledge_search, web_search
+**Core Responsibilities**: Actor attribution, TTP analysis, strategic threat assessment
+
+**Evaluation Criteria (0-10 each):**
+
+1. **Role Appropriateness**: Does the response focus on intelligence analysis rather than direct incident response?
+2. **Tool Usage**: Are threat feeds and IOC analysis used effectively for intelligence gathering?
+3. **Technical Accuracy**: Are threat actor attributions and TTP analyses well-founded?
+4. **Intelligence Quality**: Does the analysis provide valuable context, attribution, and actionable intelligence?
+5. **Collaboration**: Does the intelligence support other teams (incident response, prevention) appropriately?
+
+**Provide JSON response:**
 {
     "scores": {
-        "accuracy": <number>,
-        "actionability": <number>,
-        "completeness": <number>,
-        "context_awareness": <number>,
-        "intelligence_quality": <number>
+        "role_appropriateness": <number>,
+        "tool_usage": <number>,
+        "technical_accuracy": <number>,
+        "intelligence_quality": <number>, 
+        "collaboration": <number>
     },
     "overall": <average of all scores>,
-    "passed": <true if overall >= threshold>,
-    "feedback": "<specific improvement suggestions>"
+    "passed": <true if overall >= 6.0>,
+    "feedback": "<specific improvement suggestions focusing on intelligence analysis expertise>"
 }""",
                 "threshold": 6.0,
                 "model": "gpt-4o",
@@ -115,30 +136,71 @@ Provide a JSON response with this exact format:
             },
             
             "compliance": {
-                "name": "Compliance Guidance Quality Evaluator",
-                "prompt": """Evaluate this compliance guidance for:
-1. Technical accuracy (0-10): Are the technical details correct and appropriate for regulatory compliance?
-2. Actionability (0-10): Are the recommendations clear, specific, and implementable for compliance?
-3. Completeness (0-10): Does the response address the main aspects of the query, including follow-up considerations?
-4. Context awareness (0-10): Does it recognize if this is a follow-up question and maintain conversation continuity?
-5. Regulatory expertise (0-10): Does it demonstrate proper understanding of compliance frameworks and requirements?
+                "name": "Compliance Specialist Evaluator",
+                "prompt": """Evaluate this compliance specialist's performance:
 
-Provide a JSON response with this exact format:
+**Role Context**: Regulatory compliance, governance frameworks, legal risk assessment
+**Expected Tools**: compliance_guidance, knowledge_search, web_search  
+**Core Responsibilities**: Regulatory interpretation, compliance gaps, policy guidance
+
+**Evaluation Criteria (0-10 each):**
+
+1. **Role Appropriateness**: Does the response focus on compliance/governance rather than technical security?
+2. **Tool Usage**: Is compliance guidance tool used for authoritative regulatory information?
+3. **Technical Accuracy**: Are regulatory interpretations and compliance requirements accurate?
+4. **Regulatory Expertise**: Does the guidance demonstrate deep understanding of applicable frameworks?
+5. **Collaboration**: Are compliance requirements clearly communicated to technical teams?
+
+**Provide JSON response:**
 {
     "scores": {
-        "accuracy": <number>,
-        "actionability": <number>,
-        "completeness": <number>,
-        "context_awareness": <number>,
-        "regulatory_expertise": <number>
+        "role_appropriateness": <number>,
+        "tool_usage": <number>,
+        "technical_accuracy": <number>,
+        "regulatory_expertise": <number>,
+        "collaboration": <number>
     },
     "overall": <average of all scores>,
-    "passed": <true if overall >= threshold>,
-    "feedback": "<specific improvement suggestions>"
+    "passed": <true if overall >= 6.5>,
+    "feedback": "<specific improvement suggestions focusing on compliance expertise>"
 }""",
-                "threshold": 6.5,  # Higher threshold for compliance due to regulatory importance
+                "threshold": 6.5,  # Higher threshold for compliance precision
                 "model": "gpt-4o",
-                "weight": 1.1  # Slightly higher weight for compliance
+                "weight": 1.1
+            },
+            
+            "coordinator": {
+                "name": "Team Coordinator Evaluator",
+                "prompt": """Evaluate this team coordinator's performance:
+
+**Role Context**: Team synthesis, executive communication, specialist coordination
+**Expected Tools**: knowledge_search (coordination only, not primary research)
+**Core Responsibilities**: Synthesizing specialist input, prioritization, executive guidance
+
+**Evaluation Criteria (0-10 each):**
+
+1. **Role Appropriateness**: Does the response focus on synthesis/coordination rather than primary technical analysis?
+2. **Tool Usage**: Is the coordinator staying within bounds (knowledge search only) and not doing web research?
+3. **Synthesis Quality**: Are multiple specialist perspectives integrated effectively?
+4. **Executive Communication**: Is the guidance formatted appropriately for decision makers?
+5. **Prioritization**: Are recommendations properly prioritized by risk, impact, and feasibility?
+
+**Provide JSON response:**
+{
+    "scores": {
+        "role_appropriateness": <number>,
+        "tool_usage": <number>,
+        "synthesis_quality": <number>,
+        "executive_communication": <number>,
+        "prioritization": <number>
+    },
+    "overall": <average of all scores>,
+    "passed": <true if overall >= 5.5>,
+    "feedback": "<specific improvement suggestions focusing on coordination and synthesis>"
+}""",
+                "threshold": 5.5,
+                "model": "gpt-4o", 
+                "weight": 0.8
             }
         }
     
@@ -161,23 +223,28 @@ Provide a JSON response with this exact format:
         return evaluator
     
     def get_quality_thresholds(self) -> Dict[str, float]:
-        """Get quality thresholds for all agent types"""
-        evaluators = self.get_evaluator_prompts()
+        """Get quality thresholds for all agent types (aligned with agent_config.py)"""
         return {
-            agent_type: config["threshold"]
-            for agent_type, config in evaluators.items()
+            "incident_response": 6.0,
+            "prevention": 5.5, 
+            "threat_intel": 6.0,
+            "compliance": 6.5,
+            "coordinator": 5.5
         }
     
     def log_evaluation(self, agent_type: str, score: float, 
                       feedback: str, metadata: Optional[Dict] = None):
         """Log evaluation results to Langfuse"""
         try:
+            threshold = self.get_quality_thresholds().get(agent_type, 6.0)
+            
             # Create comprehensive metadata
             eval_metadata = {
                 "agent_type": agent_type,
                 "timestamp": self._get_timestamp(),
-                "threshold": self.get_quality_thresholds().get(agent_type, 7.0),
-                "passed": score >= self.get_quality_thresholds().get(agent_type, 7.0),
+                "threshold": threshold,
+                "passed": score >= threshold,
+                "role_specific_evaluation": True,
                 **(metadata or {})
             }
             
@@ -185,7 +252,7 @@ Provide a JSON response with this exact format:
             self.client.score(
                 name=f"{agent_type}_quality",
                 value=score,
-                data_type="NUMERIC",
+                data_type="NUMERIC", 
                 comment=feedback,
                 metadata=eval_metadata
             )
@@ -198,8 +265,63 @@ Provide a JSON response with this exact format:
                 metadata=eval_metadata
             )
             
+            # Log role-specific metrics
+            self.client.score(
+                name=f"{agent_type}_role_adherence",
+                value="WITHIN_ROLE" if eval_metadata["passed"] else "ROLE_BOUNDARY_ISSUE", 
+                data_type="CATEGORICAL",
+                metadata=eval_metadata
+            )
+            
         except Exception as e:
             print(f"Failed to log evaluation to Langfuse: {e}")
+    
+    def log_tool_usage_evaluation(self, agent_type: str, tools_used: list, 
+                                 appropriate_usage: bool, feedback: str):
+        """Log tool usage evaluation specifically"""
+        try:
+            expected_tools = {
+                "incident_response": ["ioc_analysis", "exposure_checker", "knowledge_search", "web_search"],
+                "prevention": ["vulnerability_search", "threat_feeds", "knowledge_search", "web_search"], 
+                "threat_intel": ["threat_feeds", "ioc_analysis", "knowledge_search", "web_search"],
+                "compliance": ["compliance_guidance", "knowledge_search", "web_search"],
+                "coordinator": ["knowledge_search"]
+            }
+            
+            self.client.score(
+                name=f"{agent_type}_tool_usage",
+                value="APPROPRIATE" if appropriate_usage else "INAPPROPRIATE",
+                data_type="CATEGORICAL",
+                comment=feedback,
+                metadata={
+                    "agent_type": agent_type,
+                    "tools_used": tools_used,
+                    "expected_tools": expected_tools.get(agent_type, []),
+                    "appropriate_usage": appropriate_usage,
+                    "timestamp": self._get_timestamp()
+                }
+            )
+        except Exception as e:
+            print(f"Failed to log tool usage evaluation: {e}")
+    
+    def log_collaboration_evaluation(self, agent_type: str, handoffs_suggested: list,
+                                   appropriate_collaboration: bool, feedback: str):
+        """Log collaboration and handoff evaluation"""
+        try:
+            self.client.score(
+                name=f"{agent_type}_collaboration", 
+                value="GOOD_COLLABORATION" if appropriate_collaboration else "POOR_COLLABORATION",
+                data_type="CATEGORICAL",
+                comment=feedback,
+                metadata={
+                    "agent_type": agent_type,
+                    "handoffs_suggested": handoffs_suggested,
+                    "appropriate_collaboration": appropriate_collaboration,
+                    "timestamp": self._get_timestamp()
+                }
+            )
+        except Exception as e:
+            print(f"Failed to log collaboration evaluation: {e}")
     
     def log_enhancement(self, agent_type: str, original_score: float, 
                        enhanced_score: float, enhancement_reason: str):
@@ -215,6 +337,7 @@ Provide a JSON response with this exact format:
                     "enhanced_score": enhanced_score,
                     "improvement": enhanced_score - original_score,
                     "agent_type": agent_type,
+                    "enhancement_type": "role_focused_improvement",
                     "timestamp": self._get_timestamp()
                 }
             )
@@ -257,6 +380,8 @@ Provide a JSON response with this exact format:
         total_score = 0
         passed_count = 0
         failed_agents = []
+        role_boundary_issues = []
+        tool_usage_issues = []
         
         for agent_type, eval_data in evaluations.items():
             score = eval_data.get("overall_score", 0)
@@ -266,21 +391,30 @@ Provide a JSON response with this exact format:
                 passed_count += 1
             else:
                 failed_agents.append(agent_type)
+                
+            # Check for specific issues
+            if eval_data.get("scores", {}).get("role_appropriateness", 10) < 6:
+                role_boundary_issues.append(agent_type)
+            if eval_data.get("scores", {}).get("tool_usage", 10) < 6:
+                tool_usage_issues.append(agent_type)
         
         return {
             "average_score": total_score / len(evaluations),
             "passed_count": passed_count,
             "failed_count": len(evaluations) - passed_count,
             "failed_agents": failed_agents,
+            "role_boundary_issues": role_boundary_issues,
+            "tool_usage_issues": tool_usage_issues,
             "all_passed": len(failed_agents) == 0,
-            "evaluation_count": len(evaluations)
+            "evaluation_count": len(evaluations),
+            "system_health": "GOOD" if len(failed_agents) == 0 else "NEEDS_ATTENTION"
         }
 
 
 # Initialize global instance for use across the application
 try:
     langfuse_config = LangfuseConfig()
-    print("Langfuse configuration initialized successfully")
+    print("Langfuse configuration initialized successfully with role-specific evaluators")
 except Exception as e:
     print(f"Warning: Langfuse initialization failed: {e}")
     print("Running in offline mode - Langfuse observability disabled")
@@ -302,7 +436,7 @@ def get_evaluator_config(agent_type: str) -> Dict[str, Any]:
         # Return minimal config if Langfuse is not available
         return {
             "name": f"{agent_type} evaluator (offline)",
-            "threshold": 7.0,
+            "threshold": langfuse_config.get_quality_thresholds().get(agent_type, 6.0) if langfuse_config else 6.0,
             "agent_type": agent_type,
             "offline_mode": True
         }

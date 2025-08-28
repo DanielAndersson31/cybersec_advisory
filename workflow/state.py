@@ -1,8 +1,3 @@
-"""
-Workflow state definition for the cybersecurity team.
-Uses Pydantic for consistency and type safety.
-"""
-
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from pydantic import Field
@@ -23,6 +18,13 @@ class WorkflowState(MessagesState):
     # Triage and routing
     response_strategy: Optional[str] = None  # "direct", "single_agent", "multi_agent"
     estimated_complexity: Optional[str] = None  # "simple", "moderate", "complex"
+    
+    # Agent persistence - NEW: Track active agent for follow-ups
+    active_agent: Optional[AgentRole] = None  # Track who's "leading" the conversation
+    conversation_context: Optional[str] = None  # Track conversation domain (cybersecurity, general)
+    
+    # Web search intent detection (contextual for agents)
+    web_search_intent: Optional[Dict[str, Any]] = None
     
     # Team collaboration
     team_responses: List[TeamResponse] = Field(default_factory=list)

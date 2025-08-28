@@ -11,7 +11,8 @@ import instructor
 from openai import AsyncOpenAI
 from langchain_core.tools import BaseTool
 import asyncio
-
+from datetime import datetime
+import re # Import regex module
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,11 @@ class WebSearchTool(BaseTool):
         self.tavily = AsyncTavilyClient(api_key=settings.get_secret("tavily_api_key"))
         self.instructor = instructor.patch(llm_client)
 
+    def _get_current_date_for_search(self) -> str:
+        """Returns the current month and year, e.g., 'October 2023'."""
+        now = datetime.now()
+        return now.strftime("%B %Y")
+
     def _run(
         self,
         query: str,
@@ -71,6 +77,9 @@ class WebSearchTool(BaseTool):
         Use LLM to craft better search terms for optimal results.
         """
         try:
+            # ---> FIX: Programmatically remove any years from the query before LLM sees it <---
+            cleaned_query = re.sub(r'\b(20\d{2})\b', '', user_query).strip()
+
             # Simple prompt to enhance search queries
             messages = [
                 {
@@ -82,9 +91,8 @@ Guidelines:
 - Add relevant keywords that would help find better results
 - Remove unnecessary words and filler
 - For technical topics, include proper terminology
-- For current/latest information, use "current", "latest", "recent", "today" - NEVER add specific years unless the user explicitly asks for historical data
-- For locations, include geographic specifics if helpful
-- Preserve the user's intent - don't change the meaning
+- For any query about current events, weather, or "latest" information, you MUST add words like "today", "current", or "latest".
+- ABSOLUTELY DO NOT invent or add any specific dates or years (e.g., "October 2023"). This is critical. The system will add the correct current date automatically. Your job is only to add non-specific temporal keywords if needed.
 
 Examples:
 User: "What's the weather like in London?"
@@ -93,25 +101,16 @@ Enhanced: "London weather current conditions today"
 User: "How to install Docker?"
 Enhanced: "Docker installation guide setup tutorial"
 
-User: "NIST framework"
-Enhanced: "NIST Cybersecurity Framework guide implementation"
-
 User: "Latest ransomware attack"
-Enhanced: "latest ransomware attack cybersecurity news recent"
+Enhanced: "latest ransomware attack cybersecurity news current"
 
-User: "current day and date"
-Enhanced: "current date today"
-
-User: "DDoS prevention strategies"
-Enhanced: "DDoS attack prevention strategies latest methods"
-
-IMPORTANT: Never add specific years (like 2023, 2024) unless the user specifically asks for historical information from a particular year.
+IMPORTANT: Your only job is to refine the query for a search engine. DO NOT add dates or years.
 
 Return ONLY the enhanced search query, nothing else."""
                 },
                 {
                     "role": "user",
-                    "content": f"Enhance this search query: {user_query}"
+                    "content": f"Enhance this search query: {cleaned_query}"
                 }
             ]
 
@@ -124,7 +123,7 @@ Return ONLY the enhanced search query, nothing else."""
             )
             
             enhanced = response.choices[0].message.content
-            return enhanced.strip() if enhanced else user_query
+            return enhanced.strip() if enhanced else cleaned_query
             
         except Exception as e:
             logger.warning(f"Query enhancement failed: {e}, using original query")
@@ -152,6 +151,17 @@ Return ONLY the enhanced search query, nothing else."""
             # Use LLM to craft better search terms
             enhanced_query = await self._craft_search_query(query)
             logger.info(f"Original query: '{query}' → Enhanced: '{enhanced_query}'")
+            
+            # Check for temporal keywords and inject current date if needed
+            temporal_keywords = ["latest", "recent", "current", "new", "today", "now"]
+            query_lower = query.lower() # Check the original user query for intent
+            
+            if any(keyword in query_lower for keyword in temporal_keywords):
+                current_date = self._get_current_date_for_search()
+                # Remove any lingering incorrect years before adding the correct one
+                enhanced_query = re.sub(r'\b(20\d{2})\b', '', enhanced_query).strip()
+                enhanced_query += f" {current_date}"
+                logger.info(f"Temporal keyword detected. Final query for search API: '{enhanced_query}'")
             
             results = await self.tavily.search(
                 query=enhanced_query,

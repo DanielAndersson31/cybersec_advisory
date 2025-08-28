@@ -16,6 +16,7 @@ from config.evaluation_prompts import (
     ENHANCE_RESPONSE_PROMPT,
     CHECK_GROUNDEDNESS_PROMPT,
     CHECK_RELEVANCE_PROMPT,
+    AGENT_ROLE_CONTEXTS,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,14 +118,19 @@ class QualityGateSystem:
             )
 
     @observe()
-    async def enhance_response(self, query: str, response: str, feedback: str) -> str:
+    async def enhance_response(self, query: str, response: str, feedback: str, agent_type: str) -> str:
         """Improves a response that failed the quality gate, based on specific feedback."""
         langfuse = get_client()
         
+        # ---> FIX: Build the role_context required by the enhancement prompt <---
+        role_context = AGENT_ROLE_CONTEXTS.get(agent_type, "No specific role context found.")
+
         enhancement_prompt = ENHANCE_RESPONSE_PROMPT.format(
             query=query,
             response=response,
-            feedback=feedback
+            feedback=feedback,
+            agent_type=agent_type,
+            role_context=role_context
         )
         
         try:

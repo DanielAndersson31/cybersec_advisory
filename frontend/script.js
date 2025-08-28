@@ -40,6 +40,16 @@ document.addEventListener("DOMContentLoaded", () => {
     "security-architect": { name: "Security Architect", color: "green" },
   };
 
+  // Agent role mapping for display
+  const agentRoleMapping = {
+    incident_response: { name: "Incident Responder", abbreviation: "IR", color: "orange" },
+    prevention: { name: "Prevention Specialist", abbreviation: "PS", color: "green" },
+    threat_intel: { name: "Threat Analyst", abbreviation: "TA", color: "red" },
+    compliance: { name: "Compliance Advisor", abbreviation: "CA", color: "blue" },
+    coordinator: { name: "Team Coordinator", abbreviation: "TC", color: "slate" },
+    team: { name: "Advisory Team", abbreviation: "AT", color: "purple" },
+  };
+
   // --- Initialization ---
   function init() {
     // Wait for marked.js to load and configure it
@@ -174,10 +184,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 100);
   }
 
-  function createMessageHTML({ role, content, specialist }) {
+  function createMessageHTML({ role, content, specialist, agent_name, agent_role, sources }) {
     const isUser = role === "user";
     const isThinking = content === "...";
-    const hasSpecialist = specialist && specialists[specialist];
 
     let messageContent;
     if (isUser) {
@@ -236,7 +245,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
-    const specialistClass = hasSpecialist ? "specialist-message" : "";
+    const specialistInfo = agent_role ? agentRoleMapping[agent_role] : null;
 
     // User and AI icons
     const userIcon = `
@@ -248,12 +257,8 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
 
     const aiIcon = `
-            <div class="flex-shrink-0 w-8 h-8 rounded-full ${
-              hasSpecialist ? "bg-green-600" : "bg-slate-600"
-            } flex items-center justify-center mr-3">
-                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                </svg>
+            <div class="flex-shrink-0 w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center mr-3">
+                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-3z"></path></svg>
             </div>
         `;
 
@@ -261,19 +266,28 @@ document.addEventListener("DOMContentLoaded", () => {
             <div class="message flex items-start ${isUser ? "justify-end" : "justify-start"} group">
                 ${!isUser ? aiIcon : ""}
                 <div class="message-bubble px-5 py-4 rounded-lg max-w-4xl ${
-                  isUser
-                    ? "user-message text-white"
-                    : `assistant-message ${specialistClass} ${isThinking ? "thinking" : ""}`
+                  isUser ? "user-message text-white" : `assistant-message ${isThinking ? "thinking" : ""}`
                 }">
+                   ${
+                     !isUser && !isThinking
+                       ? `<div class="font-bold mb-2 text-slate-700">${
+                           agent_name && specialistInfo
+                             ? `${agent_name} (${specialistInfo.abbreviation})`
+                             : "Advisory Team"
+                         }</div>`
+                       : ""
+                   }
+                    ${messageContent}
                     ${
-                      hasSpecialist && !isUser
-                        ? `<div class="flex items-center mb-3 text-xs font-medium text-${specialists[specialist].color}-600 bg-${specialists[specialist].color}-50 px-2 py-1 rounded-full">
-                            <div class="w-2 h-2 bg-${specialists[specialist].color}-500 rounded-full mr-2"></div>
-                            ${specialists[specialist].name}
-                        </div>`
+                      sources && sources.length > 0
+                        ? `<div class="mt-4 pt-3 border-t border-slate-200/20 text-xs">
+                             <h4 class="font-semibold mb-1 text-slate-600">Sources & Tools Used:</h4>
+                             <ul class="list-disc pl-4 text-slate-500">
+                               ${sources.map((source) => `<li>${source}</li>`).join("")}
+                             </ul>
+                           </div>`
                         : ""
                     }
-                    ${messageContent}
                 </div>
                 ${isUser ? userIcon : ""}
             </div>
@@ -456,6 +470,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Update the thinking indicator with response
       thinkingIndicator.content = data.response;
+      thinkingIndicator.agent_name = data.agent_name;
+      thinkingIndicator.agent_role = data.agent_role;
+      thinkingIndicator.sources = data.tools_used; // Make sure backend sends this key
 
       // If backend indicates specialist, add that info
       if (data.specialist && specialists[data.specialist]) {

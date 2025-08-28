@@ -57,7 +57,7 @@ class ConversationManager:
             # Compile workflow with checkpointer
             self.workflow.compile_with_checkpointer(checkpointer)
             self.initialized = True
-            logger.info(f"Conversation manager initialized with in-memory storage (localStorage for frontend)")
+            logger.info("Conversation manager initialized with in-memory storage (localStorage for frontend)")
         else:
             logger.error("Failed to get checkpointer from state store.")
             self.initialized = False
@@ -74,7 +74,7 @@ class ConversationManager:
         retry=retry_if_exception_type((ConnectionError, TimeoutError)),
         reraise=True
     )
-    async def chat(self, message: str, thread_id: str = "default") -> str:
+    async def chat(self, message: str, thread_id: str = "default") -> Dict[str, Any]:
         """Enhanced chat interface with retry logic and metadata tracking."""
         if not self.initialized:
             raise RuntimeError("ConversationManager not initialized. Call await manager.initialize() first.")
@@ -95,6 +95,25 @@ class ConversationManager:
         history.add_user_message(message, entities=entities)
         
         try:
+            # Load previous state to maintain context
+            config = {"configurable": {"thread_id": thread_id}}
+            previous_state_snapshot = await self.workflow.get_state(thread_id)
+            previous_state = previous_state_snapshot.values if previous_state_snapshot else {}
+            
+            # Prepare initial state, preserving key context from previous turn
+            if previous_state:
+                # If state exists, carry over the active agent and context
+                initial_state = {
+                    "query": message,
+                    "active_agent": previous_state.get("active_agent"),
+                    "conversation_context": previous_state.get("conversation_context"),
+                }
+                logger.info(f"Loaded previous state for thread {thread_id}: active_agent={initial_state.get('active_agent')}, context={initial_state.get('conversation_context')}")
+            else:
+                # No previous state, start fresh
+                initial_state = {"query": message}
+                logger.info(f"No previous state found for thread {thread_id}, starting fresh.")
+
             # Convert conversation history to the format expected by the workflow
             conversation_history = []
             for msg in history.messages:
@@ -107,11 +126,16 @@ class ConversationManager:
             
             # Get workflow response
             response = await self.workflow.get_team_response(
-                query=message,
+                initial_state=initial_state,
                 thread_id=thread_id,
                 conversation_history=conversation_history
             )
             
+            # Ensure response is a dictionary
+            if not isinstance(response, dict):
+                logger.warning(f"Workflow returned an unexpected type: {type(response)}. Wrapping it in a dict.")
+                response = {"final_answer": str(response)}
+
             # Calculate processing time
             processing_time = time.time() - start_time
             
@@ -122,7 +146,7 @@ class ConversationManager:
             
             # Add assistant message with metadata
             history.add_assistant_message(
-                response,
+                response.get("final_answer", "No response found."),
                 agent_used=agent_used,
                 tools_used=tools_used,
                 confidence_score=confidence_score,
@@ -147,7 +171,7 @@ class ConversationManager:
             error_msg = "I apologize, but I encountered an error processing your request. Please try again."
             history.add_assistant_message(error_msg, processing_time=time.time() - start_time)
             
-            return error_msg
+            return {"final_answer": error_msg}
     
     async def get_conversation_summary(self, thread_id: str) -> Optional[str]:
         """Get intelligent summary of conversation."""
@@ -187,7 +211,7 @@ class ConversationManager:
             logger.error(f"Entity extraction failed: {e}")
             return []
     
-    def _extract_agent_from_response(self, response: str) -> Optional[str]:
+    def _extract_agent_from_response(self, response: Dict[str, Any]) -> Optional[str]:
         """Extract which agent provided the response."""
         # Look for agent names in response
         agent_indicators = {
@@ -197,33 +221,46 @@ class ConversationManager:
             "Maria Santos": ["compliance", "regulation", "policy", "audit"]
         }
         
-        response_lower = response.lower()
+        response_lower = response.get("final_answer", "").lower() if isinstance(response, dict) else response.lower()
         for agent, keywords in agent_indicators.items():
             if any(keyword in response_lower for keyword in keywords):
                 return agent
         
         return "Cybersecurity Team"
     
-    def _extract_tools_from_response(self, response: str) -> List[str]:
+    def _extract_tools_from_response(self, response: Dict[str, Any]) -> List[str]:
         """Extract which tools were used based on response content."""
+        if not isinstance(response, dict):
+            return []
+
         tools = []
-        response_lower = response.lower()
+        final_answer = response.get("final_answer", "").lower()
         
-        if "searching" in response_lower or "found information" in response_lower:
+        if "searching" in final_answer or "found information" in final_answer:
             tools.append("web_search")
-        if "knowledge base" in response_lower:
+        if "knowledge base" in final_answer:
             tools.append("knowledge_search")
-        if "analysis" in response_lower and "threat" in response_lower:
+        if "analysis" in final_answer and "threat" in final_answer:
             tools.append("threat_analysis")
         
-        return tools
+        # Also check for explicitly passed tool usage
+        if "team_responses" in response:
+            for resp in response["team_responses"]:
+                if resp.response.tools_used:
+                    tools.extend([tool.tool_name for tool in resp.response.tools_used])
+
+        return sorted(list(set(tools)))
     
-    def _extract_confidence_from_response(self, response: str) -> Optional[float]:
+    def _extract_confidence_from_response(self, response: Dict[str, Any]) -> Optional[float]:
         """Extract confidence score from response."""
+        if not isinstance(response, dict):
+            return 0.5
+            
+        final_answer = response.get("final_answer", "")
         # Simple heuristic based on response characteristics
-        if len(response) > 500 and "recommend" in response.lower():
+        if len(final_answer) > 500 and "recommend" in final_answer.lower():
             return 0.9
-        elif len(response) > 200:
+        elif len(final_answer) > 200:
             return 0.7
         else:
             return 0.5

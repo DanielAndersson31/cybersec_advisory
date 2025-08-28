@@ -86,28 +86,28 @@ AGENT_CONFIGS = {
 
 
 TOOL_DEFINITIONS = {
-    "ioc_analysis_tool": {
-        "name": "ioc_analysis_tool",
+    "ioc_analysis": {
+        "name": "ioc_analysis",
         "description": "Analyzes a specific Indicator of Compromise (IOC) like an IP address, domain, or file hash to determine if it is malicious and get context.",
         "parameters": { "type": "object", "properties": { "indicator": { "type": "string", "description": "The IOC to analyze, e.g., '1.2.3.4' or 'badsite.com."}}, "required": ["indicator"]}
     },
-    "vulnerability_search_tool": {
-        "name": "vulnerability_search_tool",
+    "vulnerability_search": {
+        "name": "vulnerability_search",
         "description": "Searches for details on a Common Vulnerabilities and Exposures (CVE) ID to find its severity, impacted systems, and available patches.",
-        "parameters": { "type": "object", "properties": { "cve_id": { "type": "string", "description": "The CVE identifier, e.g., 'CVE-2023-12345'."}}, "required": ["cve_id"]}
+        "parameters": { "type": "object", "properties": { "query": { "type": "string", "description": "The CVE identifier or search query, e.g., 'CVE-2023-12345' or 'Apache Log4j'."}}, "required": ["query"]}
     },
-    "web_search_tool": {
-        "name": "web_search_tool",
+    "web_search": {
+        "name": "web_search",
         "description": "Performs a web search to find up-to-date information on cybersecurity news, emerging threats, or technical topics.",
         "parameters": { "type": "object", "properties": { "query": { "type": "string", "description": "The search query."}}, "required": ["query"]}
     },
-    "knowledge_search_tool": {
-        "name": "knowledge_search_tool",
+    "knowledge_search": {
+        "name": "knowledge_search",
         "description": "Searches the internal knowledge base for company-specific documents like playbooks, policies, and post-incident reports.",
         "parameters": { "type": "object", "properties": { "query": { "type": "string", "description": "The topic or keyword to search for in the knowledge base."}}, "required": ["query"]}
     },
-    "exposure_checker_tool": {
-        "name": "exposure_checker_tool",
+    "exposure_checker": {
+        "name": "exposure_checker",
         "description": "Checks if an email address has been exposed in a data breach.",
         "parameters": {
             "type": "object",
@@ -117,52 +117,45 @@ TOOL_DEFINITIONS = {
             "required": ["email"]
         }
     },
-    "attack_surface_analyzer_tool": {
-        "name": "attack_surface_analyzer_tool",
-        "description": "Analyzes a company's domain to identify exposed assets, open ports, and potential vulnerabilities visible from the internet.",
-        "parameters": { "type": "object", "properties": { "domain": { "type": "string", "description": "The company's primary domain to analyze."}}, "required": ["domain"]}
-    },
-    "threat_feeds_tool": {
-        "name": "threat_feeds_tool",
+    "threat_feeds": {
+        "name": "threat_feeds",
         "description": "Queries subscribed threat intelligence feeds for information on threat actors, campaigns, tactics, techniques, and procedures (TTPs).",
-        "parameters": { "type": "object", "properties": { "topic": { "type": "string", "description": "The threat actor, campaign, or TTP to research."}}, "required": ["topic"]}
+        "parameters": { "type": "object", "properties": { "query": { "type": "string", "description": "The threat actor, campaign, or TTP to research."}, "limit": { "type": "integer", "description": "Maximum number of results to return (default: 5)."}, "fetch_full_details": { "type": "boolean", "description": "Whether to fetch full details including IOCs (default: false)."}}, "required": ["query"]}
     },
-    "compliance_guidance_tool": {
-        "name": "compliance_guidance_tool",
+    "compliance_guidance": {
+        "name": "compliance_guidance",
         "description": "Provides guidance on specific regulatory compliance frameworks like GDPR, HIPAA, or PCI-DSS based on a query.",
-        "parameters": { "type": "object", "properties": { "framework": { "type": "string", "description": "The compliance framework, e.g., 'GDPR'."}, "query": { "type": "string", "description": "The specific compliance question."}}, "required": ["framework", "query"]}
+        "parameters": { "type": "object", "properties": { "framework": { "type": "string", "description": "The compliance framework, e.g., 'GDPR'."}, "data_type": { "type": "string", "description": "Type of data involved, e.g., 'personal_data', 'health_data'."}, "region": { "type": "string", "description": "Geographic region, e.g., 'EU', 'US'."}, "incident_type": { "type": "string", "description": "Type of incident, e.g., 'breach', 'vulnerability'."}}, "required": ["framework"]}
     }
 }
 
 
 AGENT_TOOL_PERMISSIONS = {
     AgentRole.INCIDENT_RESPONSE: [
-        "ioc_analysis_tool",
-        "vulnerability_search_tool",
-        "web_search_tool",
-        "knowledge_search_tool",
-        "exposure_checker_tool"
+        "ioc_analysis",
+        "web_search",
+        "knowledge_search",
+        "exposure_checker",
     ],
     AgentRole.PREVENTION: [
-        "vulnerability_search_tool",
-        "attack_surface_analyzer_tool",
-        "web_search_tool",
-        "knowledge_search_tool"
+        "vulnerability_search",
+        "web_search",
+        "knowledge_search",
+        "threat_feeds"
     ],
     AgentRole.THREAT_INTEL: [
-        "ioc_analysis_tool",
-        "threat_feeds_tool",
-        "web_search_tool",
-        "knowledge_search_tool"
+        "ioc_analysis",
+        "threat_feeds",
+        "web_search",
+        "knowledge_search"
     ],
     AgentRole.COMPLIANCE: [
-        "compliance_guidance_tool",
-        "web_search_tool",
-        "knowledge_search_tool"
+        "compliance_guidance",
+        "web_search",
+        "knowledge_search"
     ],
     AgentRole.COORDINATOR: [
-        "web_search_tool",
-        "knowledge_search_tool"
+        "knowledge_search"
     ]
 }
 

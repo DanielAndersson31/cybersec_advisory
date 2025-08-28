@@ -1,7 +1,13 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Union
 from pydantic import BaseModel, Field
 from config.agent_config import AgentRole
 from datetime import datetime, timezone
+
+class SearchIntentResult(BaseModel):
+    """Result of LLM-based search intent analysis."""
+    needs_web_search: bool = Field(description="Whether the query needs current web information")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in the assessment")
+    reasoning: str = Field(max_length=200, description="Brief explanation of why web search is/isn't needed")
 
 class ToolUsage(BaseModel):
     """Represents a tool that was used by an agent during analysis."""
@@ -12,10 +18,34 @@ class ToolUsage(BaseModel):
         description="When the tool was executed."
     )
 
+class NaturalAgentResponse(BaseModel):
+    """
+    A natural, conversational response from a cybersecurity agent.
+    Used for single-agent responses that should feel more human and less robotic.
+    """
+    content: str = Field(
+        ...,
+        description="The natural, conversational response from the agent."
+    )
+    confidence_score: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="The agent's confidence in its analysis, from 0.0 to 1.0."
+    )
+    handoff_request: Optional[AgentRole] = Field(
+        None,
+        description="If the agent believes another specialist should take over, this field specifies which one."
+    )
+    tools_used: List[ToolUsage] = Field(
+        default_factory=list,
+        description="A list of tools that were used during the analysis."
+    )
+
 class StructuredAgentResponse(BaseModel):
     """
-    A structured response from a cybersecurity agent, designed for clarity,
-    consistency, and programmatic access.
+    A structured response from a cybersecurity agent, used for coordination.
+    Only used when multiple agents are working together and need formal structure.
     """
     summary: str = Field(
         ...,
@@ -40,11 +70,14 @@ class StructuredAgentResponse(BaseModel):
         description="A list of tools that were used during the analysis."
     )
 
+# Union type for flexible response handling
+AgentResponse = Union[NaturalAgentResponse, StructuredAgentResponse]
+
 class TeamResponse(BaseModel):
     """A structured object representing a single agent's contribution to the team."""
     agent_name: str = Field(..., description="The name of the agent making the response.")
     agent_role: AgentRole = Field(..., description="The role of the agent.")
-    response: StructuredAgentResponse = Field(..., description="The structured response from the agent.")
+    response: AgentResponse = Field(..., description="The response from the agent.")
     tools_used: List[ToolUsage] = Field(
         default_factory=list,
         description="A list of tools used by the agent during its analysis.",
@@ -86,6 +119,7 @@ class ContextContinuityCheck(BaseModel):
     is_follow_up: bool = Field(description="Whether this is a follow-up to a previous cybersecurity conversation")
     context_maintained: bool = Field(description="Whether the cybersecurity context is maintained")
     previous_context: Optional[str] = Field(default=None, description="Summary of previous cybersecurity context")
+    specialist_context: str = Field(description="Type of specialist context: incident_response, prevention, threat_intel, compliance, or general")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence in the continuity assessment")
     reasoning: str = Field(max_length=300, description="Explanation of the continuity assessment")
 
@@ -123,3 +157,10 @@ class FinalReport(BaseModel):
         None,
         description="If there were any significant disagreements or conflicting perspectives from the specialist agents, they are summarized here."
     )
+
+class ChatResponse(BaseModel):
+    """The structured response sent to the frontend for a chat message."""
+    response: str = Field(..., description="The final, user-facing response from the agent or team.")
+    agent_name: Optional[str] = Field(None, description="The name of the agent who responded.")
+    agent_role: Optional[str] = Field(None, description="The role of the agent who responded (e.g., 'prevention').")
+    tools_used: List[str] = Field(default_factory=list, description="A list of tool names used to generate the response.")

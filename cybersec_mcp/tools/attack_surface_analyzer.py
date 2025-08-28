@@ -13,7 +13,6 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 
-# Pydantic Models
 class OpenPortInfo(BaseModel):
     """Details of a single open port found on a host."""
     port: int

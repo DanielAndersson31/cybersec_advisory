@@ -4,13 +4,13 @@ Uses LangChain's with_structured_output for reliable outputs with retries.
 """
 
 import logging
-from typing import List
+from typing import List, Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from pydantic import ValidationError
 from langfuse import observe
 
-from config.agent_config import AgentRole, INTERACTION_RULES
+from config.agent_config import AgentRole, INTERACTION_RULES, AGENT_TOOL_PERMISSIONS, TOOL_DEFINITIONS
 from workflow.schemas import RoutingDecision, CybersecurityClassification
 
 from cybersec_mcp.cybersec_tools import CybersecurityToolkit
@@ -38,48 +38,62 @@ class QueryRouter:
             self.toolkit.get_tool_by_name("knowledge_search")
         ])
         
+        # This is no longer the primary source of truth, but a fallback/supplement.
         self.agent_expertise = {
-            AgentRole.INCIDENT_RESPONSE: "Handles active security incidents, breaches, malware infections, and suspicious activities. Focuses on containment, eradication, and recovery.",
+            AgentRole.INCIDENT_RESPONSE: "Handles active security incidents, breaches, malware infections, and suspicious activities. Also checks for data exposure and whether credentials have been compromised in known breaches.",
             AgentRole.PREVENTION: "Focuses on proactive defense, secure architecture, vulnerability management, and risk mitigation. Designs and recommends security controls.",
-            AgentRole.THREAT_INTEL: "Analyzes threat actors, their tactics (TTPs), and campaigns. Provides deep, contextualized intelligence on adversary motives and likely future actions.",
+            AgentRole.THREAT_INTEL: "Analyzes threat actors, TTPs, and campaigns. Also investigates potential data exposures and tracks breach intelligence.",
             AgentRole.COMPLIANCE: "Specializes in regulatory frameworks (GDPR, HIPAA, PCI-DSS), policies, and audits. Provides guidance on governance and compliance obligations."
         }
 
-    async def determine_routing_strategy(self, query: str) -> RoutingDecision:
+    async def determine_routing_strategy(self, query: str, context_hint: Optional[str] = None, active_agent: Optional[AgentRole] = None) -> RoutingDecision:
         """
         Determines the optimal response strategy using intelligent triage.
-        First checks if query is cybersecurity-related, then routes appropriately.
-        """
-        # Quick pre-check: Is this cybersecurity-related?
-        logger.info(f"🔍 Starting cybersecurity classification for query: '{query}'")
-        is_cybersec = await self._is_cybersecurity_related(query)
-        logger.info(f"📋 Classification result: cybersecurity_related={is_cybersec}")
+        Now supports context-aware routing for persistent conversations.
         
-        if not is_cybersec:
-            logger.info(f"✅ Routing '{query}' to general assistant (non-cybersecurity)")
+        Args:
+            query: The user's query
+            context_hint: Context from previous conversation (e.g., "incident_response", "prevention")
+            active_agent: Currently active agent from previous conversation
+            
+        Returns:
+            RoutingDecision with strategy and relevant agents
+        """
+        logger.info(f"🔧 ROUTER RECEIVED: query='{query[:50]}...', context_hint={context_hint}, active_agent={active_agent}")
+
+        # ---> REFACTORED LOGIC <---
+        # PRIORITY 1: If context is maintained with a specialist, KEEP IT.
+        if context_hint and context_hint != "general" and active_agent:
+            logger.info(f"🔗 CONTEXT PRIORITY: Active '{context_hint}' context detected. Maintaining conversation with {active_agent.value}.")
             return RoutingDecision(
-                response_strategy="general_query",
-                relevant_agents=[],
-                reasoning="Non-cybersecurity query - routing to general assistant mode",
+                response_strategy="single_agent",
+                relevant_agents=[active_agent],
+                reasoning=f"Follow-up question in an active '{context_hint}' context. Continuing with the specialist.",
                 estimated_complexity="simple"
             )
         
-        # If cybersecurity-related, use normal triage
+        # PRIORITY 2: If no context, classify the new query.
+        logger.info(f"🔍 No active context. Starting fresh classification for query: '{query[:50]}...'")
+        is_cybersec = await self._is_cybersecurity_related(query)
+        
+        if not is_cybersec:
+            logger.info(f"✅ General Query: Routing '{query[:50]}...' to general assistant.")
+            return RoutingDecision(
+                response_strategy="general_query",
+                relevant_agents=[],
+                reasoning="Non-cybersecurity query detected.",
+                estimated_complexity="simple"
+            )
+        
+        # PRIORITY 3: If it's a new cybersecurity query, perform full triage.
+        logger.info(f"🛡️ New Cybersecurity Query: Performing full triage for '{query[:50]}...'")
         prompt = self._build_triage_prompt(query)
         
         try:
-            # Retry logic with LangChain structured output
-            for attempt in range(3):
-                try:
-                    decision = await self.routing_llm.ainvoke([
-                        SystemMessage(content="You are an intelligent SOC triage system. Provide structured routing decisions."),
-                        HumanMessage(content=prompt)
-                    ])
-                    break
-                except Exception as e:
-                    if attempt == 2:  # Last attempt
-                        raise e
-                    logger.warning(f"Routing attempt {attempt + 1} failed: {e}, retrying...")
+            decision = await self.routing_llm.ainvoke([
+                SystemMessage(content="You are an intelligent SOC triage system. Provide structured routing decisions."),
+                HumanMessage(content=prompt)
+            ])
             
             logger.info(f"Triage decision for query '{query[:50]}...': {decision.response_strategy} - {decision.reasoning}")
             
@@ -90,7 +104,7 @@ class QueryRouter:
             return decision
         
         except Exception as e:
-            logger.error(f"LangChain structured triage failed after retries: {e}")
+            logger.error(f"LangChain structured triage failed: {e}")
             # Graceful fallback to single agent strategy
             return RoutingDecision(
                 response_strategy="single_agent",
@@ -108,49 +122,98 @@ class QueryRouter:
 
     def _build_triage_prompt(self, query: str) -> str:
         """Constructs the intelligent triage prompt for response strategy determination."""
-        expertise_descriptions = "\\n".join(
-            f"- **{role.value}**: {desc}" for role, desc in self.agent_expertise.items()
-        )
+        
+        # Dynamically build the agent specializations and supporting tools
+        agent_capabilities = []
+        for role, tool_names in AGENT_TOOL_PERMISSIONS.items():
+            if role == AgentRole.COORDINATOR: continue # Skip coordinator
+            
+            # Start with the high-level expertise description - this is the primary focus
+            expertise = self.agent_expertise.get(role, f"Specialist in {role.value.replace('_', ' ')}.")
+            capability_str = f"- **{role.value}**: {expertise}"
+            
+            # Add supporting tools (secondary information)
+            tool_descriptions = []
+            for tool_name in tool_names:
+                tool_def = TOOL_DEFINITIONS.get(tool_name)
+                if tool_def:
+                    tool_descriptions.append(f"    - `{tool_def['name']}`: {tool_def['description']}")
+            
+            if tool_descriptions:
+                capability_str += f"\n  **Supporting Tools:**\n" + "\n".join(tool_descriptions)
+            else:
+                capability_str += "\n  **Supporting Tools:** No specific tools assigned."
+            
+            agent_capabilities.append(capability_str)
+            
+        expertise_descriptions = "\n".join(agent_capabilities)
         
         return f"""
-You are an intelligent SOC triage system. Your job is to determine the optimal response strategy for cybersecurity queries, mirroring how real Security Operations Centers work.
+You are an intelligent SOC triage system. Your job is to determine the optimal response strategy for cybersecurity queries by routing them to the agent whose PRIMARY ROLE AND EXPERTISE best matches the user's needs.
+
+**Core Routing Philosophy:**
+🎯 **ROLE EXPERTISE FIRST** - Match the query to which agent's primary responsibility this falls under
+🔧 **TOOLS SECOND** - Verify the chosen agent has necessary tools, but don't let tool quantity drive decisions
+⚖️ **BALANCED ROUTING** - Avoid always choosing the agent with the most tools
 
 **Available Response Strategies:**
 
 1. **DIRECT** (Target: 60-70% of queries)
    - Simple factual questions ("What is NIST?", "How to report phishing?")
-   - Basic definitions and explanations
-   - General cybersecurity guidance
-   - Knowledge base lookups
-   → Router handles directly with cybersecurity tools
+   - Basic definitions and explanations that don't require specialized analysis
+   - → Router handles directly. Select this if no specialist expertise is needed.
 
 2. **SINGLE_AGENT** (Target: 25-30% of queries)  
-   - Requires specific domain expertise
-   - Investigation or analysis needed
-   - One specialist perspective sufficient
-   → Route to one appropriate specialist
+   - Query clearly falls under one agent's area of responsibility
+   - Requires specialized knowledge or analysis from a domain expert
+   - → Route to the agent whose primary role best matches the query intent
 
 3. **MULTI_AGENT** (Target: 5-10% of queries)
-   - Major incidents requiring multiple perspectives
-   - Complex scenarios spanning multiple domains
-   - High-stakes decisions needing consensus
-   → Full team consultation needed
+   - Complex scenarios requiring multiple specialist perspectives
+   - Incidents spanning multiple domains (e.g., breach requiring both incident response AND compliance review)
+   - → Select all agents whose primary expertise is essential to address the query
 
-**Specialist Agent Expertise:**
+**Agent Specializations & Supporting Tools:**
 {expertise_descriptions}
 
 **User Query:**
 "{query}"
 
 ---
-**Instructions:**
-1. **Analyze the query complexity and type**
-2. **Determine the optimal response strategy** based on SOC triage principles
-3. **If single/multi-agent**, select the most relevant specialist(s)
-4. **Provide clear reasoning** for your triage decision
-5. **Estimate complexity level**: simple, moderate, complex
+**Decision Framework:**
+1. **Analyze the user's query to understand the PRIMARY INTENT and CONTEXT**
+   - What is the user really trying to accomplish?
+   - What type of expertise do they need?
+   - Is this reactive (incident) or proactive (prevention)?
 
-**Remember**: Bias toward faster responses. Only escalate to specialists when their expertise is truly needed.
+2. **Match query intent to agent PRIMARY RESPONSIBILITY**
+   - Which agent's core role/expertise best aligns with this need?
+   - Ignore tool counts - focus on which agent should "own" this type of request
+
+3. **Verify the chosen agent has appropriate supporting tools**
+   - Can the selected agent actually execute what's needed?
+   - If not, consider if a different agent or multi-agent approach is needed
+
+4. **Select response strategy and provide reasoning**
+   - Explain why this agent's expertise matches the query
+   - Mention supporting tools as validation, not primary justification
+
+**Example Reasoning Patterns:**
+
+✅ **Good**: "Route to INCIDENT_RESPONSE because **breach investigation and exposure checking is their primary responsibility**. They have the exposure_checker tool to execute this request."
+
+❌ **Bad**: "Route to INCIDENT_RESPONSE because they have the most tools available (5 tools vs 3 for others)."
+
+✅ **Good**: "Route to PREVENTION because **proactive security architecture and vulnerability management is their core expertise**. This aligns with the user's need for preventive controls."
+
+❌ **Bad**: "Route to PREVENTION because they have vulnerability_search and threat_feeds tools."
+
+**Complexity Guidelines:**
+- **Simple**: Basic questions, definitions, general guidance
+- **Moderate**: Specific analysis, single-domain problems, standard procedures  
+- **Complex**: Multi-faceted incidents, cross-domain issues, strategic decisions
+
+Focus on matching USER INTENT to AGENT EXPERTISE, not user keywords to agent tools.
 """
 
     async def _is_cybersecurity_related(self, query: str) -> bool:

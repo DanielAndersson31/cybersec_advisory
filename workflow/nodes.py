@@ -9,10 +9,11 @@ from langfuse import observe
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from workflow.state import WorkflowState
-from workflow.schemas import TeamResponse
+from workflow.schemas import TeamResponse, SearchIntentResult
 from config.agent_config import AgentRole
 from agents.factory import AgentFactory
 from cybersec_mcp.cybersec_tools import CybersecurityToolkit
+from workflow.schemas import ContextContinuityCheck
 
 
 logger = logging.getLogger(__name__)
@@ -47,31 +48,149 @@ class WorkflowNodes:
         else:
             logger.info("Web search tool pre-initialized for general assistant.")
 
+        # Create structured LLM for search intent detection
+        self.search_intent_llm = llm_client.with_structured_output(SearchIntentResult)
+
+        # Create structured LLM for context continuity check, including retry logic
+        self.context_continuity_llm = llm_client.with_structured_output(
+            ContextContinuityCheck
+        ).with_retry(stop_after_attempt=2)
+
+    async def _detect_web_search_intent(self, query: str) -> dict:
+        """
+        Intelligent web search intent detection using both keywords and LLM analysis.
+        Only focuses on WEB search - internal knowledge search is left to agent expertise.
+        
+        Returns:
+            dict with web_search_required, intent_type, confidence, and reasoning
+        """
+        query_lower = query.lower()
+        
+        # Quick keyword check for obvious web search requests
+        explicit_web_triggers = [
+            "look up", "look it up", "search for", "check online", "search online", 
+            "web search", "search the web", "google", "find online"
+        ]
+        
+        # Temporal triggers that suggest need for current information
+        temporal_triggers = [
+            "latest", "recent", "current", "new", "emerging", "today", "this week",
+            "this month", "2024", "2025", "now", "currently", "nowadays"
+        ]
+        
+        # Quick positive detection for explicit requests
+        explicit_web_match = any(trigger in query_lower for trigger in explicit_web_triggers)
+        has_temporal_indicators = any(trigger in query_lower for trigger in temporal_triggers)
+        
+        if explicit_web_match:
+            return {
+                "web_search_required": True,
+                "intent_type": "explicit_web_request",
+                "confidence": 0.95,
+                "reasoning": f"Explicit web search language detected",
+                "trigger_phrase": next(trigger for trigger in explicit_web_triggers if trigger in query_lower)
+            }
+        
+        # For temporal indicators or ambiguous cases, use LLM analysis
+        if has_temporal_indicators or any(word in query_lower for word in ["trends", "updates", "news", "happening"]):
+            try:
+                llm_prompt = f"""
+Analyze this query to determine if it requires web search for current/recent information.
+
+Query: "{query}"
+
+Consider:
+1. Does this ask for current, recent, or latest information that changes frequently?
+2. Does this require real-time or up-to-date data from the web?
+3. Is this asking about trends, news, or current events?
+4. Would the answer be different today vs 6 months ago?
+
+Examples that NEED web search:
+- "latest CVE vulnerabilities"
+- "current threat landscape" 
+- "recent data breaches"
+- "new security tools in 2025"
+
+Examples that DON'T need web search:
+- "explain NIST framework"
+- "incident response best practices"
+- "how to configure firewall rules"
+
+Respond with structured analysis of web search necessity.
+"""
+                
+                intent_result = await self.search_intent_llm.ainvoke([
+                    SystemMessage(content="You are an expert at determining when queries need current web information vs existing knowledge."),
+                    HumanMessage(content=llm_prompt)
+                ])
+                
+                return {
+                    "web_search_required": intent_result.needs_web_search,
+                    "intent_type": "llm_analyzed" if intent_result.needs_web_search else "no_web_needed",
+                    "confidence": intent_result.confidence,
+                    "reasoning": intent_result.reasoning,
+                    "trigger_phrase": None
+                }
+                
+            except Exception as e:
+                logger.warning(f"LLM search intent analysis failed: {e}")
+                # Fallback: if has temporal indicators, assume web search needed
+                return {
+                    "web_search_required": has_temporal_indicators,
+                    "intent_type": "temporal_fallback" if has_temporal_indicators else "no_web_needed",
+                    "confidence": 0.7 if has_temporal_indicators else 0.9,
+                    "reasoning": "Fallback analysis due to LLM error",
+                    "trigger_phrase": None
+                }
+        
+        # No web search intent detected
+        return {
+            "web_search_required": False,
+            "intent_type": "no_web_needed",
+            "confidence": 0.9,
+            "reasoning": "No temporal indicators or explicit web search requests",
+            "trigger_phrase": None
+        }
+
     @observe(name="analyze_query")
     async def analyze_query(self, state: WorkflowState) -> WorkflowState:
         """
         Analyze and classify the user query to determine context and routing strategy.
-        
-        This is the main analysis step where we:
-        1. Understand what the user is asking for
-        2. Classify if it's cybersecurity-related or general
-        3. Determine the appropriate response strategy
-        4. Set up routing information for the workflow
-        
-        Args:
-            state: Current workflow state
-            
-        Returns:
-            Updated state with classification and routing decision
+        Now includes context-aware routing for persistent conversations.
         """
-        logger.info(f"🔍 Analyzing and classifying query: {state['query'][:100]}...")
+        logger.info(f"Analyzing and classifying query: {state['query'][:100]}...")
         
         # Set metadata
         state["started_at"] = datetime.now(timezone.utc)
         state["messages"].append(HumanMessage(content=state["query"]))
         
-        # Perform intelligent classification and routing decision
-        routing_decision = await self.router.determine_routing_strategy(state["query"])
+        # DETECT WEB SEARCH INTENT
+        web_search_intent = await self._detect_web_search_intent(state["query"])
+        state["web_search_intent"] = web_search_intent
+        
+        if web_search_intent["web_search_required"]:
+            logger.info(f"WEB SEARCH INTENT DETECTED: {web_search_intent['intent_type']} "
+                       f"(confidence: {web_search_intent['confidence']:.2f}) - {web_search_intent['reasoning']}")
+        
+        # Check for context continuity first
+        context_continuity = state.get("context_continuity", {})
+        
+        # Prepare context hints for router
+        context_hint = None
+        active_agent = state.get("active_agent")
+        
+        # If we have cybersecurity context, provide hints to router
+        if (context_continuity.get("context_maintained") and 
+            context_continuity.get("specialist_context") not in ["general", None]):
+            context_hint = context_continuity.get("specialist_context")
+            logger.info(f"🔧 ROUTER CALL: context_hint={context_hint}, active_agent={active_agent}")
+        
+        # Perform intelligent classification and routing decision with context awareness
+        routing_decision = await self.router.determine_routing_strategy(
+            state["query"],
+            context_hint=context_hint,
+            active_agent=active_agent
+        )
         
         # Update state with analysis results
         state["response_strategy"] = routing_decision.response_strategy
@@ -85,7 +204,7 @@ class WorkflowNodes:
         # Determine if consensus needed
         state["needs_consensus"] = len(routing_decision.relevant_agents) > 1
         
-        logger.info(f"✅ Analysis complete for '{state['query'][:50]}...': {routing_decision.response_strategy} "
+        logger.info(f"Analysis complete for '{state['query'][:50]}...': {routing_decision.response_strategy} "
                    f"(complexity: {routing_decision.estimated_complexity}) - {routing_decision.reasoning}")
         
         return state
@@ -94,106 +213,108 @@ class WorkflowNodes:
     async def check_context_continuity(self, state: WorkflowState) -> WorkflowState:
         """
         Check if the current query maintains cybersecurity conversation context.
-        
-        This node analyzes whether the current query is a follow-up to a previous
-        cybersecurity conversation and maintains the appropriate context.
-        
-        Args:
-            state: Current workflow state
-            
-        Returns:
-            Updated state with context continuity information
+        Enhanced with debugging information.
         """
-        logger.info(f"🔗 Checking context continuity for query: {state['query'][:100]}...")
+        logger.info(f"Checking context continuity for query: {state['query'][:100]}...")
         
-        # Get conversation history from state
+        # DEBUG: Log all state information
+        logger.info(f"DEBUG: Active agent in state: {state.get('active_agent')}")
+        logger.info(f"DEBUG: Conversation context in state: {state.get('conversation_context')}")
+        logger.info(f"DEBUG: Thread ID: {state.get('thread_id')}")
+        
         conversation_history = state.get("conversation_history", [])
+        logger.info(f"DEBUG: Conversation history length: {len(conversation_history)}")
         
-        if not conversation_history:
-            # First query in conversation, no context to maintain
+        # If no conversation history, check if we have active_agent from previous state
+        if not conversation_history and not state.get("active_agent"):
+            logger.info("First query in conversation - no context to maintain")
             state["context_continuity"] = {
                 "is_follow_up": False,
-                "context_maintained": True,
+                "context_maintained": False,
                 "previous_context": None,
+                "specialist_context": "general",
                 "confidence": 1.0,
                 "reasoning": "First query in conversation"
             }
-            logger.info("✅ First query in conversation - no context to maintain")
             return state
         
-        # Analyze the last few messages for cybersecurity context
-        recent_messages = conversation_history[-3:]  # Last 3 messages for context
+        recent_messages = conversation_history[-3:] if conversation_history else []
+        active_agent_str = f"The active specialist is the {state.get('active_agent').value} agent." if state.get("active_agent") else "There is no specific active specialist."
+
+        logger.info(f"DEBUG: Recent messages: {[msg.get('role') for msg in recent_messages]}")
         
-        # Create context analysis prompt
         context_prompt = f"""
-        Analyze whether the current query maintains cybersecurity conversation context.
-        
-        **Recent Conversation History:**
-        {chr(10).join([f"- {msg.get('role', 'user')}: {msg.get('content', '')[:200]}..." for msg in recent_messages])}
-        
-        **Current Query:**
-        {state['query']}
-        
-        **Instructions:**
-        1. Determine if this is a follow-up to a previous cybersecurity conversation
-        2. Assess if the cybersecurity context is maintained
-        3. Provide confidence level and reasoning
-        
-        Respond in JSON format:
-        {{
-            "is_follow_up": <boolean>,
-            "context_maintained": <boolean>,
-            "previous_context": "<brief summary of previous cybersecurity context>",
-            "confidence": <float between 0-1>,
-            "reasoning": "<explanation of the assessment>"
-        }}
-        """
+    Analyze if the "Current Query" is a direct follow-up to the "Recent Conversation History".
+    The conversation is currently with a cybersecurity specialist. Assume the context is maintained unless the user explicitly changes the topic to something completely unrelated to the ongoing cybersecurity discussion.
+
+    **Recent Conversation History:**
+    {chr(10).join([f"- {msg.get('role', 'user')}: {msg.get('content', '')[:200]}..." for msg in recent_messages])}
+    
+    **Active Agent Context:**
+    {active_agent_str}
+
+    **Current Query:**
+    {state['query']}
+
+    **Assessment:**
+    1.  Is the query a question, statement, or command that logically follows from the last message?
+    2.  Does the query ask for clarification, more detail, or the next step related to the previous topic?
+    3.  Even if the query has no cybersecurity keywords, could it still be related to the ongoing cybersecurity context? (e.g., "why did that happen?", "tell me more", "what should I do now?")
+
+    **Decision:**
+    - If it is a follow-up, set `context_maintained` to `true` and `specialist_context` to the active agent's role.
+    - If it is a clear and unrelated topic change (e.g., asking about the weather), set `context_maintained` to `false` and `specialist_context` to `general`.
+    """
         
         try:
-            # Use the LLM to analyze context continuity
-            response = await self.llm_client.ainvoke([
-                SystemMessage(content="You are an expert at analyzing conversation context and continuity."),
+            context_result = await self.context_continuity_llm.ainvoke([
+                SystemMessage(content="You are an expert at analyzing cybersecurity conversation context and specialist expertise continuity."),
                 HumanMessage(content=context_prompt)
             ])
             
-            # Parse the response
-            import json
-            context_result = json.loads(response.content)
+            state["context_continuity"] = context_result.model_dump()
             
-            state["context_continuity"] = context_result
-            
-            logger.info(f"✅ Context continuity check: Follow-up={context_result['is_follow_up']}, "
-                       f"Context maintained={context_result['context_maintained']}, "
-                       f"Confidence={context_result['confidence']:.2f}")
+            logger.info(f"Context continuity check successful: Follow-up={context_result.is_follow_up}, "
+                    f"Context maintained={context_result.context_maintained}, "
+                    f"Specialist context={context_result.specialist_context}, "
+                    f"Confidence={context_result.confidence:.2f}")
             
         except Exception as e:
-            logger.warning(f"Failed to analyze context continuity: {e}")
-            # Default to assuming context is maintained
-            state["context_continuity"] = {
-                "is_follow_up": True,
-                "context_maintained": True,
-                "previous_context": "Previous cybersecurity conversation",
-                "confidence": 0.7,
-                "reasoning": "Default assumption due to analysis failure"
-            }
+            logger.error(f"Context continuity check failed after all retries: {e}")
+            # Enhanced fallback - use persisted state if available
+            active_agent = state.get("active_agent")
+            if active_agent:
+                state["context_continuity"] = {
+                    "is_follow_up": True,
+                    "context_maintained": True,
+                    "previous_context": f"Previous conversation with {active_agent.value}",
+                    "specialist_context": active_agent.value.lower(),
+                    "confidence": 0.7,
+                    "reasoning": f"Fallback: Using persisted active agent {active_agent.value}"
+                }
+            else:
+                state["context_continuity"] = {
+                    "is_follow_up": True,
+                    "context_maintained": True,
+                    "previous_context": "Previous cybersecurity conversation",
+                    "specialist_context": "general",
+                    "confidence": 0.5,
+                    "reasoning": "Default assumption due to analysis failure"
+                }
         
         return state
     
-    # Removed redundant triage_query - analysis now handles classification and routing decision
-
     @observe(name="consult_agent")
     async def consult_agent(self, state: WorkflowState) -> WorkflowState:
         """
         Consults all agents in the agents_to_consult list for their expertise.
-
-        Args:
-            state: Current workflow state containing agents_to_consult and messages.
-
-        Returns:
-            Updated state with team responses from all consulted agents.
+        Now tracks the active agent for persistent conversations.
         """
         agents_to_consult = state["agents_to_consult"]
         messages = state["messages"]
+        
+        # Get web search intent
+        web_search_intent = state.get("web_search_intent", {})
         
         # Consult each agent in the list
         for agent_role in agents_to_consult:
@@ -204,8 +325,31 @@ class WorkflowNodes:
                 continue
 
             try:
-                logger.info(f"Consulting {agent.name}...")
-                structured_response = await agent.respond(messages=messages)
+                logger.info(f"CONSULTING: {agent.name}")
+                logger.info(f"{agent.name}: {len(agent.permitted_tools)} tools available: {[tool.name for tool in agent.permitted_tools]}")
+                logger.info(f"{agent.name}: Processing {len(messages)} messages in conversation history")
+                logger.info(f"{agent.name}: Current query: '{state['query'][:100]}...'")
+                
+                # The user's query should remain pristine. Context is passed as a separate message.
+                messages_for_agent = [HumanMessage(content=state['query'])]
+
+                if web_search_intent.get("web_search_required"):
+                    logger.info(f"WEB SEARCH CONTEXT: {agent.name} - {web_search_intent['intent_type']} "
+                              f"(confidence: {web_search_intent['confidence']:.2f})")
+                    
+                    # Create a system message with the search context
+                    search_context = f"[SEARCH CONTEXT: Your analysis indicates the user's query may require current information from the web. "
+                    if web_search_intent['intent_type'] == 'explicit_web_request':
+                        search_context += f"This was detected from an explicit request ('{web_search_intent.get('trigger_phrase', 'web search')}'). "
+                    else:
+                        search_context += f"This was detected based on temporal indicators or currency requirements. "
+                    search_content = search_context + f"Reasoning: {web_search_intent['reasoning']}. You should strongly consider using the web_search tool.]"
+                    
+                    # Add the context as a separate message for the agent
+                    messages_for_agent.insert(0, SystemMessage(content=search_content))
+
+                logger.info(f"{agent.name}: Using only current query, not conversation history")
+                structured_response = await agent.respond(messages=messages_for_agent)
                 
                 team_response = TeamResponse(
                     agent_name=agent.name,
@@ -215,13 +359,33 @@ class WorkflowNodes:
                 )
                 
                 state["team_responses"].append(team_response)
-                logger.info(f"{agent.name} provided response (confidence: {structured_response.confidence_score:.2f})")
+                
+                # Log tool usage
+                if structured_response.tools_used:
+                    tool_names = [tool.tool_name for tool in structured_response.tools_used]
+                    logger.info(f"{agent.name}: Used tools: {', '.join(tool_names)}")
+                else:
+                    logger.warning(f"{agent.name}: NO TOOLS USED")
+                
+                logger.info(f"{agent.name}: Response completed (confidence: {structured_response.confidence_score:.2f})")
 
             except Exception as e:
                 logger.error(f"Error consulting {agent.name}: {e}")
                 state["error_count"] = state.get("error_count", 0) + 1
                 state["last_error"] = str(e)
                 continue
+        
+        # Track the active agent for follow-ups (agent persistence)
+        if len(state["team_responses"]) == 1:
+            # Single agent response - track this agent as active
+            state["active_agent"] = state["team_responses"][0].agent_role
+            state["conversation_context"] = "cybersecurity"
+            logger.info(f"Tracking active agent for follow-ups: {state['active_agent'].value}")
+        elif len(state["team_responses"]) > 1:
+            # Multi-agent response - don't set a single active agent
+            state["active_agent"] = None
+            state["conversation_context"] = "cybersecurity"
+            logger.info("Multi-agent response - no single active agent set")
         
         return state
 
@@ -236,7 +400,13 @@ class WorkflowNodes:
         Returns:
             Updated state with general assistant response
         """
-        logger.info(f"🤖 General assistant handling query: {state['query'][:50]}...")
+        logger.info(f"--- Entering General Response Node ---")
+        logger.info(f"State 'query' at this point: '{state['query']}'")
+        logger.info(f"Number of messages in state: {len(state['messages'])}")
+        if state['messages']:
+            logger.info(f"Last message content: '{state['messages'][-1].content}'")
+            
+        logger.info(f"General assistant handling query: {state['query'][:50]}...")
         
         try:
             # Use shared LLM client
@@ -249,14 +419,16 @@ class WorkflowNodes:
             system_prompt = """
 You are a helpful, friendly general assistant with web search capabilities.
 
-- Be warm, helpful, and direct
-- For greetings, respond as a friendly human would
-- For questions requiring current information (weather, news, recent events, current facts), use the web_search_tool
-- For general knowledge questions, answer directly if you're confident
-- Keep responses concise but complete
-- Be engaging and personable
+- Be warm, helpful, and direct.
+- For greetings, respond as a friendly human would.
+- **You MUST use the `web_search_tool` for any questions about the current time, date, weather, or any other real-time information. Do not answer from your own knowledge.**
+- For questions requiring current information (weather, news, recent events, current facts), use the web_search_tool.
+- For general knowledge questions, answer directly if you're confident.
+- Keep responses concise but complete.
+- Be engaging and personable.
 
 When to use web search:
+- **Current time or date queries.**
 - Weather queries ("What's the weather in London?")
 - Current news or events
 - Recent information that might have changed
@@ -266,6 +438,7 @@ When to use web search:
 The web_search_tool is now generic and works for any type of query - you control the focus through your search terms.
 """
             
+            # Use the full message history for context-awareness
             messages = [
                 SystemMessage(content=system_prompt),
                 *state["messages"]
@@ -286,8 +459,8 @@ The web_search_tool is now generic and works for any type of query - you control
                     tool_id = tool_call["id"]
                     
                     try:
-                        # Handle web search tool specifically (since we have the instance)
-                        if tool_name == "web_search":  # Note: direct tool name, not wrapper
+                        if tool_name == "web_search":
+                            logger.info(f"LLM generated tool query for web_search: '{tool_args.get('query')}'")
                             tool_result = await self.web_search_tool.ainvoke(tool_args)
                         else:
                             # For any other tools that might be called
@@ -297,7 +470,7 @@ The web_search_tool is now generic and works for any type of query - you control
                             content=str(tool_result),
                             tool_call_id=tool_id
                         ))
-                        
+                    
                     except Exception as tool_error:
                         logger.error(f"Tool execution failed for {tool_name}: {tool_error}")
                         # Always provide a response, even if tool fails
@@ -308,14 +481,25 @@ The web_search_tool is now generic and works for any type of query - you control
                 
                 # Final response after tool calls
                 final_response = await llm_with_tools.ainvoke(messages)
-                final_answer = final_response.content
+                final_answer = final_response.content.strip() if final_response.content else ""
+
+                if not final_answer:
+                    logger.warning("LLM returned an empty response after tool call. Using fallback.")
+                    final_answer = "I found some information using a web search, but I'm having trouble summarizing it. Could you try rephrasing your question?"
             else:
                 # No tools used, use direct response
-                final_answer = response.content
+                final_answer = response.content.strip() if response.content else ""
+                if not final_answer:
+                    logger.warning("LLM returned an empty response (no tools). Using fallback.")
+                    final_answer = "I'm sorry, I'm having trouble formulating a response. Could you please try again?"
             
             state["final_answer"] = final_answer
             state["messages"].append(AIMessage(content=final_answer))
             state["completed_at"] = datetime.now(timezone.utc)
+            
+            # Clear active agent and set general context
+            state["active_agent"] = None
+            state["conversation_context"] = "general"
             
             logger.info("General assistant provided response (with web search capability)")
             
@@ -346,7 +530,7 @@ The web_search_tool is now generic and works for any type of query - you control
         Returns:
             Updated state with direct response
         """
-        logger.info(f"🎯 Handling simple cybersecurity query directly: {state['query'][:50]}...")
+        logger.info(f"Handling simple cybersecurity query directly: {state['query'][:50]}...")
         
         try:
             # Handle direct cybersecurity response with router tools
@@ -358,6 +542,10 @@ The web_search_tool is now generic and works for any type of query - you control
             state["messages"].append(AIMessage(content=state["final_answer"]))
             state["completed_at"] = datetime.now(timezone.utc)
             
+            # Keep cybersecurity context but don't set specific active agent for direct responses
+            state["conversation_context"] = "cybersecurity"
+            state["active_agent"] = None  # Direct responses don't have a specific agent
+            
             logger.info("Direct cybersecurity response completed successfully")
             
         except Exception as e:
@@ -367,10 +555,6 @@ The web_search_tool is now generic and works for any type of query - you control
             state["last_error"] = str(e)
         
         return state
-
-    def get_team_response_as_str(self, team_response: TeamResponse) -> str:
-        """A simple node to extract the string content from a TeamResponse object."""
-        return f"**{team_response.agent_name} ({team_response.agent_role.value}):**\n{team_response.response.summary}"
 
     @observe(name="coordinate_responses")
     async def coordinate_responses(self, state: WorkflowState) -> WorkflowState:
@@ -403,94 +587,132 @@ The web_search_tool is now generic and works for any type of query - you control
 **Analyses from Specialist Agents:**
 {''.join(expert_analyses)}
 """
+        
+        logger.info(f"COORDINATOR: Context length: {len(coordination_context)} chars")
+        logger.info(f"COORDINATOR: Agent responses to synthesize: {[resp.agent_name for resp in state['team_responses']]}")
 
-        # The coordinator returns a StructuredAgentResponse, but its content is a FinalReport
-        # We need to adjust the base agent to handle this, or cast the response here.
-        # For now, let's assume the response can be cast or handled appropriately.
-        final_report_structured = await self.coordinator.respond(messages=[{"role": "user", "content": coordination_context}])
+        logger.info(f"COORDINATOR: Processing {len(state['team_responses'])} agent responses")
+        final_report_structured = await self.coordinator.respond(messages=[HumanMessage(content=coordination_context)])
 
         # Format the final report into a user-friendly markdown string
         final_answer = f"## Executive Summary\n\n{final_report_structured.summary}\n\n"
         
-        # This part needs adjustment based on how FinalReport is returned
-        # Assuming summary contains the exec summary and recommendations the prioritized list
         if final_report_structured.recommendations:
             final_answer += "## Prioritized Recommendations\n\n"
             for i, rec in enumerate(final_report_structured.recommendations, 1):
                 final_answer += f"**{i}.** {rec}\n\n"
 
+        # Append tool usage information from all agents
+        all_tools_used = []
+        for resp in state["team_responses"]:
+            if resp.response.tools_used:
+                all_tools_used.extend(resp.response.tools_used)
+
+        if all_tools_used:
+            final_answer += "\n\n---\n"
+            final_answer += "**Sources & Tools Used:**\n"
+            unique_tool_names = sorted(list(set(tool.tool_name for tool in all_tools_used)))
+            for tool_name in unique_tool_names:
+                final_answer += f"- **{tool_name}**\n"
+
         state["final_answer"] = final_answer
         state["messages"].append(AIMessage(content=state["final_answer"]))
         state["completed_at"] = datetime.now(timezone.utc)
         
-        logger.info(f"Coordinator synthesized response from {len(state['team_responses'])} agents.")
+        # For coordinated responses, don't set a single active agent
+        state["active_agent"] = None
+        state["conversation_context"] = "cybersecurity"
+        
+        logger.info(f"COORDINATOR: Synthesized response from {len(state['team_responses'])} agents")
+        logger.info(f"COORDINATOR: Final response length: {len(state['final_answer'])} chars")
         return state
 
     @observe(name="synthesize_responses")
     async def synthesize_responses(self, state: WorkflowState) -> WorkflowState:
         """
         Synthesize all agent responses into a final, high-quality answer.
-        For single-agent responses, it rewrites them into a more natural, conversational format.
-        For multi-agent responses, it combines them into a consolidated view.
+        For single-agent natural responses, pass them through with minimal processing.
+        For multi-agent responses, combine them into a consolidated view.
         """
         if not state["team_responses"]:
             state["final_answer"] = "I couldn't gather expert analysis for your query."
             return state
         
         if len(state["team_responses"]) == 1:
-            # For a single agent, rewrite the structured response into a natural, conversational format
+            # For single agent with natural response, use it directly with light formatting
             agent_response = state["team_responses"][0]
-            summary = agent_response.response.summary
-            recommendations = agent_response.response.recommendations
+            response_content = agent_response.response
             
-            synthesis_prompt = f"""
-You are an expert at communicating cybersecurity advice. Your task is to rewrite the following structured analysis from a specialist into a single, cohesive, and easy-to-read response for the end-user.
+            # Handle both natural and structured responses
+            if hasattr(response_content, 'content'):
+                # Natural response - use directly
+                final_answer = response_content.content
+            else:
+                # Structured response - format naturally
+                final_answer = response_content.summary
+                if response_content.recommendations:
+                    final_answer += "\n\n**Key Recommendations:**\n"
+                    for rec in response_content.recommendations:
+                        final_answer += f"• {rec}\n"
 
-**Use markdown formatting for better readability.** Structure your response with clear headers, bullet points, and emphasis where appropriate. Make it easy to scan and understand.
+            # Append tool usage information if any tools were used
+            if agent_response.tools_used:
+                final_answer += "\n\n**Sources & Tools Used:**\n"
+                for tool in agent_response.tools_used:
+                    final_answer += f"• {tool.tool_name}\n"
 
-**Specialist's Analysis:**
----
-**Summary:**
-{summary}
-
-**Recommendations:**
-{', '.join(recommendations)}
----
-
-Rewrite the above analysis into a clear, well-formatted markdown response with appropriate headers, bullet points, and emphasis.
-"""
-            
-            llm_response = await self.llm_client.ainvoke([HumanMessage(content=synthesis_prompt)])
-            final_answer = llm_response.content
             state["final_answer"] = final_answer
         
         else:
-            # For multiple agents, create a consolidated view with markdown formatting
-            combined_summary = "## Team Analysis Summary\n\nBased on our team's analysis, here is a consolidated view:\n\n"
-            combined_recommendations = []
+            # For multiple agents, create a structured consolidated view
+            combined_summary = "## Team Analysis Summary\n\n"
+            combined_summary += "Our cybersecurity team has analyzed your query:\n\n"
             
             for resp in state["team_responses"]:
-                combined_summary += f"### {resp.agent_name} ({resp.agent_role.value})\n\n"
-                combined_summary += f"{resp.response.summary}\n\n"
-                if resp.response.recommendations:
-                    for rec in resp.response.recommendations:
-                        # Avoid duplicate recommendations
-                        if rec not in combined_recommendations:
-                            combined_recommendations.append(rec)
-
-            final_answer = f"{combined_summary}"
-            if combined_recommendations:
-                final_answer += "## Consolidated Recommendations\n\n"
-                for rec in combined_recommendations:
-                    final_answer += f"• **{rec}**\n\n"
+                agent_name = resp.agent_name.split(' (')[0]  # Clean up name
+                combined_summary += f"**{agent_name}**: "
+                
+                # Handle both response types
+                if hasattr(resp.response, 'content'):
+                    combined_summary += resp.response.content + "\n\n"
+                else:
+                    combined_summary += resp.response.summary + "\n\n"
             
+            # Collect recommendations from structured responses
+            all_recommendations = []
+            for resp in state["team_responses"]:
+                if hasattr(resp.response, 'recommendations') and resp.response.recommendations:
+                    for rec in resp.response.recommendations:
+                        if rec not in all_recommendations:
+                            all_recommendations.append(rec)
+            
+            final_answer = combined_summary
+            
+            if all_recommendations:
+                final_answer += "## Key Recommendations\n\n"
+                for rec in all_recommendations:
+                    final_answer += f"• {rec}\n"
+                final_answer += "\n"
+            
+            # Append tool usage from all agents
+            all_tools_used = []
+            for resp in state["team_responses"]:
+                if resp.tools_used:
+                    all_tools_used.extend(resp.tools_used)
+
+            if all_tools_used:
+                final_answer += "\n**Sources & Tools Used:**\n"
+                unique_tool_names = sorted(list(set(tool.tool_name for tool in all_tools_used)))
+                for tool_name in unique_tool_names:
+                    final_answer += f"• {tool_name}\n"
+
             state["final_answer"] = final_answer
         
         state["messages"].append(AIMessage(content=state["final_answer"]))
         state["completed_at"] = datetime.now(timezone.utc)
         
         logger.info(f"Synthesized response from {len(state['team_responses'])} agents")
-        
+    
         return state
     
     @observe(name="check_quality")
@@ -570,7 +792,8 @@ Rewrite the above analysis into a clear, well-formatted markdown response with a
             enhanced_response = await self.quality_system.enhance_response(
                 query=state["query"],
                 response=state["final_answer"],
-                feedback=quality_result.feedback
+                feedback=quality_result.feedback,
+                agent_type=agent_type
             )
             
             state["final_answer"] = enhanced_response
