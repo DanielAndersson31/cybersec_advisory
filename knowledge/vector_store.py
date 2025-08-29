@@ -34,27 +34,23 @@ class VectorStoreManager:
             qdrant_api_key: The API key for the Qdrant instance.
             model_name: FastEmbed model to use (default: bge-small for speed/quality balance)
         """
-        # The async client is needed for async operations like get_collections
         self.async_client = AsyncQdrantClient(
             url=qdrant_url,
             api_key=qdrant_api_key,
             timeout=30
         )
-        # The sync client is better suited for CPU-bound sync operations like upsert
         self.client = QdrantClient(
             url=qdrant_url,
             api_key=qdrant_api_key,
-            timeout=30  # Add timeout for production
+            timeout=30
         )
         
-        # Initialize FastEmbed with caching for better performance
         self.embedding_model = TextEmbedding(
             model_name=model_name,
-            cache_dir="./embedding_cache",  # Cache model files locally
-            threads=4  # Use multiple threads for faster embedding
+            cache_dir="./embedding_cache",
+            threads=4
         )
         
-        # Set dimensions based on model
         self.embedding_dim = 384 if "small" in model_name else 768
         
         logger.info(f"VectorStoreManager initialized with {model_name} (dim: {self.embedding_dim})")
@@ -84,23 +80,20 @@ class VectorStoreManager:
             collection_name: The name for the collection
         """
         try:
-            # Using the sync client is generally fine for this check
             collections_response = self.client.get_collections()
             existing_collections = [col.name for col in collections_response.collections]
             
             if collection_name not in existing_collections:
-                # Create with optimized settings for FastEmbed
                 self.client.create_collection(
                     collection_name=collection_name,
                     vectors_config=VectorParams(
                         size=self.embedding_dim,
                         distance=Distance.COSINE
                     ),
-                    # Optimize for performance
                     optimizers_config=models.OptimizersConfigDiff(
-                        indexing_threshold=10000,  # Start indexing after 10k vectors
+                        indexing_threshold=10000,
                     ),
-                    on_disk_payload=True  # Store payload on disk for large collections
+                    on_disk_payload=True
                 )
                 logger.info(f"Collection '{collection_name}' created with vector size {self.embedding_dim}")
             else:
@@ -125,17 +118,12 @@ class VectorStoreManager:
         try:
             total_processed = 0
             
-            # Process in batches for better memory management
             for i in range(0, len(documents), batch_size):
                 batch = documents[i:i + batch_size]
                 
-                # Prepare content with BGE prefix for optimal performance
                 contents = [f"passage: {doc.content}" for doc in batch]
-                
-                # Embed batch (FastEmbed returns generator, convert to list)
                 embedded_vectors = list(self.embedding_model.embed(contents))
                 
-                # Create points
                 points = [
                     PointStruct(
                         id=doc.doc_id,
@@ -143,7 +131,6 @@ class VectorStoreManager:
                         payload={
                             "content": doc.content,
                             "metadata": doc.metadata,
-                            # Add useful fields for filtering
                             "doc_type": doc.metadata.get("type", "unknown"),
                             "timestamp": doc.metadata.get("timestamp", str(uuid.uuid4())),
                         }
@@ -151,7 +138,6 @@ class VectorStoreManager:
                     for doc, vector in zip(batch, embedded_vectors)
                 ]
                 
-                # Upsert batch
                 self.client.upsert(
                     collection_name=collection_name,
                     points=points,
@@ -188,29 +174,23 @@ class VectorStoreManager:
         Returns:
             A list of search results with content, metadata, and score
         """
-        # Check if collection exists first
         if not self.collection_exists(collection_name):
             logger.info(f"Collection '{collection_name}' does not exist - knowledge base may not be populated yet")
             return []
         
         try:
-            # Use query prefix for BGE models (critical for performance!)
             query_with_prefix = f"query: {query}"
-            
-            # Embed query manually for full control
             query_embedding = list(self.embedding_model.embed([query_with_prefix]))[0]
             
-            # Search with embedded vector using the async client
             hits = await self.async_client.search(
                 collection_name=collection_name,
                 query_vector=query_embedding.tolist() if hasattr(query_embedding, 'tolist') else list(query_embedding),
-                query_filter=filter_dict,  # Add filtering if provided
+                query_filter=filter_dict,
                 limit=k,
-                score_threshold=score_threshold,  # Filter by minimum score
+                score_threshold=score_threshold,
                 with_payload=True
             )
             
-            # Process results
             formatted_results = []
             for hit in hits:
                 payload = hit.payload or {}
@@ -229,16 +209,13 @@ class VectorStoreManager:
             return formatted_results
             
         except Exception as e:
-            # Handle missing collection gracefully
             if "doesn't exist" in str(e) or "Not found" in str(e):
                 logger.info(f"Collection '{collection_name}' not found - knowledge base may not be populated yet")
                 return []
             else:
-                # Log other errors with full details
                 logger.error(f"Search failed in collection '{collection_name}' for query: '{query}'")
                 if hasattr(e, 'response') and e.response is not None:
                     try:
-                        # Try to get detailed error content from the HTTP response
                         raw_response_content = await e.response.read()
                         logger.error(f"Raw response from Qdrant: {raw_response_content.decode()}")
                     except Exception as read_exc:
@@ -273,13 +250,11 @@ class VectorStoreManager:
                     query=query,
                     k=k_per_collection
                 )
-                # Add collection name to results
                 for result in results:
                     result["collection"] = collection
                 all_results.extend(results)
             except Exception as e:
                 logger.error(f"Failed to search collection {collection}: {e}")
         
-        # Sort by score and return top results
         all_results.sort(key=lambda x: x["score"], reverse=True)
         return all_results[:k_per_collection * len(collection_names)]

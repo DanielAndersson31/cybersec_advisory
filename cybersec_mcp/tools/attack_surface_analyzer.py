@@ -62,21 +62,17 @@ class AttackSurfaceAnalyzerTool(BaseTool):
             An AttackSurfaceResponse with details of the host's exposure.
         """
         async with httpx.AsyncClient() as client:
-            # Extract hostname from URL if needed
             hostname = self._extract_hostname(host)
             
-            # ZoomEye's API uses GET requests with query parameters
             url = f"{self.base_url}/host/search"
             headers = {"API-KEY": self.api_key}
             
-            # Build query parameters
             params = {
                 "query": f'ip:"{hostname}"' if self._is_ip(hostname) else f'hostname:"{hostname}"',
                 "page": 1
             }
             
             try:
-                # Make the API request using GET
                 api_response = await client.get(url, headers=headers, params=params)
                 
                 if api_response.status_code == 402:
@@ -105,7 +101,6 @@ class AttackSurfaceAnalyzerTool(BaseTool):
                         error=f"ZoomEye API error: {api_response.status_code} - {api_response.text}"
                     )
                 
-                # Parse the successful response
                 data = api_response.json()
                 matches = data.get("matches", [])
                 
@@ -113,18 +108,16 @@ class AttackSurfaceAnalyzerTool(BaseTool):
                     return AttackSurfaceResponse(
                         query_host=host,
                         ip_address=hostname if self._is_ip(hostname) else "",
-                        status="success", # It's a success, just no data found
+                        status="success",
                         error="Host not found in ZoomEye database."
                     )
 
-                # Process all matches to get comprehensive port information
                 port_details = []
                 main_match = matches[0]
                 ip_address = main_match.get("ip", "")
                 organization = main_match.get("organization", "N/A")
                 country = main_match.get("geoinfo", {}).get("country", {}).get("name", "N/A")
 
-                # Collect ports from all matches for this host
                 for match in matches:
                     if match.get("portinfo"):
                         port_info = match["portinfo"]

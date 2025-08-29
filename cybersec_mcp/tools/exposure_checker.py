@@ -5,36 +5,25 @@ Tool to check for email exposure using XposedOrNot API.
 import logging
 from typing import List, Optional
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import ConfigDict
 from langchain_core.tools import BaseTool
 import asyncio
 
+from .schemas import ExposureDetails, ExposureCheckResponse
+
 logger = logging.getLogger(__name__)
-
-
-class ExposureDetails(BaseModel):
-    """Details of a single exposure - simplified to match XposedOrNot API."""
-    breach_name: str
-    # Note: XposedOrNot api_v2 only provides breach names, not detailed metadata
-
-class ExposureCheckResponse(BaseModel):
-    """The structured response for an exposure check."""
-    status: str = "success"
-    query: str
-    is_exposed: bool
-    exposure_count: int
-    exposures: List[ExposureDetails] = []
-    breach_names: Optional[List[str]] = None  # Raw breach names from API
-    error: Optional[str] = None
-    message: Optional[str] = None
 
 
 class ExposureCheckerTool(BaseTool):
     """
     Tool to check for email exposure using the XposedOrNot API.
+    
+    ⚠️ PRIVACY WARNING: This tool sends email addresses to a third-party API (XposedOrNot).
+    Only use for non-sensitive investigations. Do NOT use for internal corporate emails
+    or sensitive personal information without proper authorization.
     """
     name: str = "exposure_checker"
-    description: str = "Check if an email address has been exposed in data breaches."
+    description: str = "Check if email has been exposed in breaches. ⚠️ PRIVACY: Sends email to 3rd-party API - only for non-sensitive investigations."
     base_url: str = "https://api.xposedornot.com/v1"
     client: httpx.AsyncClient = None
 
@@ -56,6 +45,8 @@ class ExposureCheckerTool(BaseTool):
 
     async def check(self, email: str) -> ExposureCheckResponse:
         """Checks a single email address against the XposedOrNot database."""
+        logger.warning(f"⚠️ PRIVACY: Sending email '{email}' to third-party API (XposedOrNot). Ensure this is authorized for non-sensitive investigations only.")
+        
         try:
             logger.info(f"Making API request to: {self.base_url}/check-email/{email}")
             response = await self.client.get(f"{self.base_url}/check-email/{email}")
@@ -66,21 +57,17 @@ class ExposureCheckerTool(BaseTool):
             response.raise_for_status()
             data = response.json()
             
-            # Log the raw API response for debugging
             logger.info(f"Raw API Response: {data}")
             
             exposure_details = []
             breach_names_list = []
             
-            # XposedOrNot api_v2 returns breaches as simple array of breach names
             if data.get("breaches"):
                 breaches_list = data["breaches"]
                 logger.info(f"Found breaches in response: {breaches_list}")
                 
-                # Handle if breaches is nested array: [["Breach1", "Breach2"]]
                 if isinstance(breaches_list, list) and len(breaches_list) > 0:
                     if isinstance(breaches_list[0], list):
-                        # Flatten nested array
                         breach_names_list = breaches_list[0]
                         logger.info(f"Flattened nested array: {breach_names_list}")
                     else:

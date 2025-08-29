@@ -9,7 +9,7 @@ from datetime import datetime
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from conversation.config import conversation_config
+from conversation.config import ConversationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -17,14 +17,14 @@ logger = logging.getLogger(__name__)
 class ConversationSummarizer:
     """LLM-powered conversation summarizer with intelligent context preservation."""
     
-    def __init__(self, llm: Optional[ChatOpenAI] = None):
-        """Initialize with LLM for intelligent summarization."""
+    def __init__(self, llm: Optional[ChatOpenAI] = None, config: Optional[ConversationConfig] = None):
+        """Initialize with LLM for intelligent summarization and injected configuration."""
+        self.config = config or ConversationConfig.from_env()
         self.llm = llm or ChatOpenAI(
-            model=conversation_config.summarization_model,
+            model=self.config.summarization_model,
             temperature=0.1,
             max_tokens=500
         )
-        self.config = conversation_config
     
     async def summarize_conversation(
         self, 
@@ -36,13 +36,9 @@ class ConversationSummarizer:
             return self._fallback_summary(messages)
         
         try:
-            # Prepare conversation text
             conversation_text = self._format_messages_for_summary(messages)
-            
-            # Create summarization prompt based on context type
             system_prompt = self._get_summarization_prompt(context_type)
             
-            # Get LLM summary
             response = await self.llm.ainvoke([
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=f"Conversation to summarize:\n\n{conversation_text}")
@@ -84,13 +80,11 @@ Example: ["ransomware attack", "NIST framework", "network segmentation", "AWS in
                 HumanMessage(content=conversation_text)
             ])
             
-            # Parse the response (should be JSON array)
             import json
             try:
                 topics = json.loads(response.content.strip())
                 return topics if isinstance(topics, list) else []
             except json.JSONDecodeError:
-                # Fallback: extract topics from response text
                 return [line.strip('- ') for line in response.content.split('\n') if line.strip()]
                 
         except Exception as e:
@@ -100,7 +94,7 @@ Example: ["ransomware attack", "NIST framework", "network segmentation", "AWS in
     def _format_messages_for_summary(self, messages: List[Dict[str, Any]]) -> str:
         """Format messages for LLM processing."""
         formatted = []
-        for msg in messages[-20:]:  # Last 20 messages for context
+        for msg in messages[-20:]:
             role = msg.get('role', 'unknown')
             content = msg.get('content', '')
             timestamp = msg.get('timestamp', datetime.now()).strftime('%H:%M')
@@ -143,12 +137,12 @@ Keep the summary under 300 words but ensure no critical information is lost.
         if not messages:
             return "No conversation history available."
         
-        recent_messages = messages[-10:]  # Last 10 messages
+        recent_messages = messages[-10:]
         summary_parts = []
         
         for msg in recent_messages:
             role = msg.get('role', 'unknown')
-            content = msg.get('content', '')[:100]  # First 100 chars
+            content = msg.get('content', '')[:100]
             
             if role == 'user':
                 summary_parts.append(f"User asked about: {content}...")
@@ -156,4 +150,4 @@ Keep the summary under 300 words but ensure no critical information is lost.
                 agent = msg.get('agent_used', 'System')
                 summary_parts.append(f"{agent} provided guidance on: {content}...")
         
-        return " | ".join(summary_parts[-5:])  # Last 5 interactions
+        return " | ".join(summary_parts[-5:])

@@ -57,7 +57,6 @@ async def main():
         )
         knowledge_base_path = pathlib.Path(__file__).parent.parent / "knowledge" / "domain_knowledge"
 
-        # Dynamically find all subdirectories to use as knowledge domains
         if not knowledge_base_path.exists():
             logger.error(f"Knowledge base directory not found at: {knowledge_base_path}")
             return

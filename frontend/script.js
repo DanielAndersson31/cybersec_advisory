@@ -26,10 +26,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const chatList = document.getElementById("chat-list");
   const chatTitle = document.getElementById("chat-title");
 
-  // --- State Management ---
+  // --- Simplified State Management - Single Chat ---
   let state = {
-    chats: {},
-    activeChatId: null,
+    messages: [],
+    threadId: `session-${crypto.randomUUID()}`,
   };
 
   // --- Specialist Agent Definitions (for display only) ---
@@ -50,7 +50,7 @@ document.addEventListener("DOMContentLoaded", () => {
     team: { name: "Advisory Team", abbreviation: "AT", color: "purple" },
   };
 
-  // --- Initialization ---
+  // --- Simplified Initialization ---
   function init() {
     // Wait for marked.js to load and configure it
     const initializeMarked = () => {
@@ -84,23 +84,24 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initialize marked after a short delay to ensure it's loaded
     setTimeout(initializeMarked, 100);
 
+    // Load saved state or initialize with welcome message
     const hasLoadedState = loadState();
-
-    if (hasLoadedState && state.activeChatId && state.chats[state.activeChatId]) {
-      renderChatList();
-      renderActiveChat();
-    } else {
-      createNewChat();
+    if (!hasLoadedState) {
+      initializeWelcomeMessage();
     }
 
+    // Hide chat list since we're using single chat
+    hideChatList();
+
     setupEventListeners();
+    renderChat();
     messageInput.focus();
   }
 
-  // --- Event Listeners Setup ---
+  // --- Simplified Event Listeners Setup ---
   function setupEventListeners() {
     sendBtn.addEventListener("click", sendMessage);
-    newChatBtn.addEventListener("click", createNewChat);
+    newChatBtn.addEventListener("click", clearChat);
 
     messageInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
@@ -119,57 +120,22 @@ document.addEventListener("DOMContentLoaded", () => {
     setInterval(saveState, 30000);
     window.addEventListener("beforeunload", saveState);
   }
-  // --- Rendering Functions ---
-  function renderChatList() {
-    const chatIds = Object.keys(state.chats).sort((a, b) => {
-      return new Date(state.chats[b].lastActivity || 0) - new Date(state.chats[a].lastActivity || 0);
-    });
-
-    chatList.innerHTML = chatIds
-      .map((chatId) => {
-        const chat = state.chats[chatId];
-        const isActive = state.activeChatId === chatId;
-
-        return `
-                <button data-id="${chatId}" class="chat-item w-full text-left py-3 px-4 rounded-lg transition ${
-          isActive ? "active text-white" : "text-slate-700 hover:text-slate-900"
-        }">
-                    <div class="flex items-center justify-between">
-                        <div class="flex-grow pr-2">
-                            <div class="font-medium text-sm truncate">${chat.title}</div>
-                            <div class="text-xs opacity-75 truncate">
-                                ${chat.messages.length} messages
-                            </div>
-                        </div>
-                        <span class="delete-chat-btn flex-shrink-0" data-id="${chatId}">×</span>
-                    </div>
-                </button>
-            `;
-      })
-      .join("");
-
-    chatList.querySelectorAll(".chat-item").forEach((item) => {
-      item.addEventListener("click", (e) => {
-        if (e.target.classList.contains("delete-chat-btn")) {
-          e.stopPropagation();
-          deleteChat(e.target.dataset.id);
-        } else {
-          switchChat(item.dataset.id);
-        }
-      });
-    });
+  // --- Simplified Rendering Functions ---
+  function hideChatList() {
+    // Hide the chat list section since we're using single chat
+    chatList.style.display = "none";
+    chatList.parentElement.style.display = "none";
   }
 
-  function renderActiveChat() {
-    const activeChat = state.chats[state.activeChatId];
-    chatTitle.textContent = activeChat.title;
+  function renderChat() {
+    chatTitle.textContent = "Security Consultation";
 
     // Debug: Check if marked is available
     if (!window.marked) {
       console.warn("Marked.js is not available during render");
     }
 
-    chatContainer.innerHTML = activeChat.messages.map((msg) => createMessageHTML(msg)).join("");
+    chatContainer.innerHTML = state.messages.map((msg) => createMessageHTML(msg)).join("");
 
     // Apply syntax highlighting to code blocks
     chatContainer.querySelectorAll("pre code").forEach((block) => {
@@ -294,62 +260,33 @@ document.addEventListener("DOMContentLoaded", () => {
                 `;
   }
 
-  // --- State & Chat Logic ---
-  function createNewChat() {
-    const newChatId = `chat-${Date.now()}`;
-    state.chats[newChatId] = {
-      id: newChatId,
-      threadId: `session-${crypto.randomUUID()}`,
-      messages: [
-        {
-          role: "assistant",
-          content:
-            "Welcome to **CyberGuard Enterprise Security Advisory Platform**.\n\nI'm your cybersecurity consultant, ready to provide expert guidance on:\n\n- **Risk Assessment** - Identify and evaluate security vulnerabilities\n- **Incident Response** - Emergency response and containment strategies  \n- **Compliance & Governance** - Regulatory requirements and frameworks\n- **Security Architecture** - Infrastructure design and implementation\n\nOur system will automatically connect you with the most appropriate security specialist based on your inquiry. You can use **markdown formatting** in your questions for better structure.",
-        },
-      ],
-      title: "New Security Consultation",
-      lastActivity: new Date().toISOString(),
-    };
-    switchChat(newChatId);
+  // --- Simplified State & Chat Logic ---
+  function initializeWelcomeMessage() {
+    state.messages = [
+      {
+        role: "assistant",
+        content:
+          "Welcome to **CyberGuard Enterprise Security Advisory Platform**.\n\nI'm your cybersecurity consultant, ready to provide expert guidance on:\n\n- **Risk Assessment** - Identify and evaluate security vulnerabilities\n- **Incident Response** - Emergency response and containment strategies  \n- **Compliance & Governance** - Regulatory requirements and frameworks\n- **Security Architecture** - Infrastructure design and implementation\n\nOur system will automatically connect you with the most appropriate security specialist based on your inquiry. You can use **markdown formatting** in your questions for better structure.",
+      },
+    ];
   }
 
-  function deleteChat(chatId) {
-    const chat = state.chats[chatId];
-    if (chat && chat.messages.length > 1) {
-      if (!confirm(`Delete "${chat.title}"?\n\nThis security consultation will be permanently removed.`)) {
+  function clearChat() {
+    if (state.messages.length > 1) {
+      if (!confirm("Clear this security consultation?\n\nAll messages will be permanently removed.")) {
         return;
       }
     }
 
-    delete state.chats[chatId];
-    if (state.activeChatId === chatId) {
-      const remainingChats = Object.keys(state.chats);
-      const newActiveId = remainingChats.length > 0 ? remainingChats[0] : null;
-      if (newActiveId) {
-        switchChat(newActiveId);
-      } else {
-        createNewChat();
-      }
-    }
-    renderChatList();
-  }
-
-  function switchChat(chatId) {
-    state.activeChatId = chatId;
-    const chat = state.chats[chatId];
-
-    // Update last activity
-    chat.lastActivity = new Date().toISOString();
-
-    renderChatList();
-    renderActiveChat();
+    // Reset to welcome message and generate new thread ID
+    state.threadId = `session-${crypto.randomUUID()}`;
+    initializeWelcomeMessage();
+    renderChat();
     messageInput.focus();
   }
 
-  function addMessageToActiveChat(message) {
-    const activeChat = state.chats[state.activeChatId];
-    activeChat.messages.push(message);
-    activeChat.lastActivity = new Date().toISOString();
+  function addMessage(message) {
+    state.messages.push(message);
   }
 
   // --- Enhanced UI Functions ---
@@ -365,46 +302,6 @@ document.addEventListener("DOMContentLoaded", () => {
     sendBtn.disabled = !hasContent;
   }
 
-  function generateChatTitle(content) {
-    const words = content.trim().split(" ");
-    if (words.length <= 4) {
-      return content;
-    }
-
-    // Cybersecurity keywords for intelligent titling
-    const securityTerms = [
-      "security",
-      "threat",
-      "vulnerability",
-      "attack",
-      "breach",
-      "malware",
-      "phishing",
-      "firewall",
-      "encryption",
-      "compliance",
-      "audit",
-      "risk",
-      "incident",
-      "forensics",
-      "penetration",
-      "assessment",
-      "gdpr",
-      "hipaa",
-    ];
-
-    const foundTerms = words.filter((word) => securityTerms.includes(word.toLowerCase().replace(/[^a-zA-Z]/g, "")));
-
-    if (foundTerms.length > 0) {
-      const contextualWords = words.slice(0, 2).concat(foundTerms.slice(0, 2));
-      const title = contextualWords.join(" ");
-      return title.length > 35 ? title.slice(0, 32) + "..." : title;
-    }
-
-    const title = words.slice(0, 4).join(" ");
-    return title.length > 35 ? title.slice(0, 32) + "..." : title;
-  }
-
   function handleKeyboardShortcuts(e) {
     // Ctrl/Cmd + K to focus on input
     if ((e.ctrlKey || e.metaKey) && e.key === "k") {
@@ -418,7 +315,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // --- API Communication ---
+  // --- Simplified API Communication ---
   async function sendMessage() {
     const content = messageInput.value.trim();
     if (!content) return;
@@ -427,18 +324,10 @@ document.addEventListener("DOMContentLoaded", () => {
     sendBtn.disabled = true;
     sendBtn.style.opacity = "0.4";
 
-    const activeChat = state.chats[state.activeChatId];
-
-    // Generate intelligent chat title for first user message
-    if (activeChat.messages.length === 1) {
-      activeChat.title = generateChatTitle(content);
-    }
-
     // Add user message
     const userMessage = { role: "user", content };
-    addMessageToActiveChat(userMessage);
-    renderActiveChat();
-    renderChatList();
+    addMessage(userMessage);
+    renderChat();
 
     // Clear and reset input
     messageInput.value = "";
@@ -447,18 +336,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Add thinking indicator
     const thinkingIndicator = { role: "assistant", content: "..." };
-    addMessageToActiveChat(thinkingIndicator);
-    renderActiveChat();
+    addMessage(thinkingIndicator);
+    renderChat();
 
     try {
-      const { threadId } = activeChat;
-
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: content,
-          thread_id: threadId,
+          thread_id: state.threadId,
         }),
       });
 
@@ -472,7 +359,7 @@ document.addEventListener("DOMContentLoaded", () => {
       thinkingIndicator.content = data.response;
       thinkingIndicator.agent_name = data.agent_name;
       thinkingIndicator.agent_role = data.agent_role;
-      thinkingIndicator.sources = data.tools_used; // Make sure backend sends this key
+      thinkingIndicator.sources = data.tools_used;
 
       // If backend indicates specialist, add that info
       if (data.specialist && specialists[data.specialist]) {
@@ -495,19 +382,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
       thinkingIndicator.content = errorMessage;
     } finally {
-      renderActiveChat();
+      renderChat();
       sendBtn.disabled = false;
       updateSendButtonState();
       messageInput.focus();
     }
   }
 
-  // --- Local Storage for Persistence ---
+  // --- Simplified Local Storage for Persistence ---
   function saveState() {
     try {
       const stateToSave = {
-        chats: state.chats,
-        activeChatId: state.activeChatId,
+        messages: state.messages,
+        threadId: state.threadId,
         timestamp: Date.now(),
       };
       localStorage.setItem("cybersec-enterprise-state", JSON.stringify(stateToSave));
@@ -521,11 +408,11 @@ document.addEventListener("DOMContentLoaded", () => {
       const savedState = localStorage.getItem("cybersec-enterprise-state");
       if (savedState) {
         const parsed = JSON.parse(savedState);
-        // Load state if saved within last 30 days
-        if (Date.now() - parsed.timestamp < 30 * 24 * 60 * 60 * 1000) {
-          state.chats = parsed.chats || {};
-          state.activeChatId = parsed.activeChatId;
-          return Object.keys(state.chats).length > 0;
+        // Load state if saved within last 24 hours (shorter for single chat)
+        if (Date.now() - parsed.timestamp < 24 * 60 * 60 * 1000) {
+          state.messages = parsed.messages || [];
+          state.threadId = parsed.threadId || `session-${crypto.randomUUID()}`;
+          return state.messages.length > 0;
         }
       }
     } catch (error) {

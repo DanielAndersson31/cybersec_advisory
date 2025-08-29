@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 import uuid
 from config.settings import settings  # Import your settings
+from config.agent_config import QUALITY_THRESHOLDS, AgentRole
 
 
 class LangfuseConfig:
@@ -62,7 +63,7 @@ class LangfuseConfig:
     "passed": <true if overall >= 6.0>,
     "feedback": "<specific improvement suggestions focusing on incident response expertise>"
 }""",
-                "threshold": 6.0,
+                "threshold": self.get_quality_thresholds().get(AgentRole.INCIDENT_RESPONSE, 6.0),
                 "model": "gpt-4o",
                 "weight": 1.0
             },
@@ -96,7 +97,7 @@ class LangfuseConfig:
     "passed": <true if overall >= 5.5>,
     "feedback": "<specific improvement suggestions focusing on prevention expertise>"
 }""",
-                "threshold": 5.5,
+                "threshold": self.get_quality_thresholds().get(AgentRole.PREVENTION, 5.5),
                 "model": "gpt-4o", 
                 "weight": 0.9
             },
@@ -130,7 +131,7 @@ class LangfuseConfig:
     "passed": <true if overall >= 6.0>,
     "feedback": "<specific improvement suggestions focusing on intelligence analysis expertise>"
 }""",
-                "threshold": 6.0,
+                "threshold": self.get_quality_thresholds().get(AgentRole.THREAT_INTEL, 6.0),
                 "model": "gpt-4o",
                 "weight": 1.0
             },
@@ -164,7 +165,7 @@ class LangfuseConfig:
     "passed": <true if overall >= 6.5>,
     "feedback": "<specific improvement suggestions focusing on compliance expertise>"
 }""",
-                "threshold": 6.5,  # Higher threshold for compliance precision
+                "threshold": self.get_quality_thresholds().get(AgentRole.COMPLIANCE, 6.5),  # Higher threshold for compliance precision
                 "model": "gpt-4o",
                 "weight": 1.1
             },
@@ -198,7 +199,7 @@ class LangfuseConfig:
     "passed": <true if overall >= 5.5>,
     "feedback": "<specific improvement suggestions focusing on coordination and synthesis>"
 }""",
-                "threshold": 5.5,
+                "threshold": self.get_quality_thresholds().get(AgentRole.COORDINATOR, 5.5),
                 "model": "gpt-4o", 
                 "weight": 0.8
             }
@@ -209,28 +210,20 @@ class LangfuseConfig:
         
         evaluator_prompts = self.get_evaluator_prompts()
         
-        # Return the specific evaluator or default to incident response
         evaluator = evaluator_prompts.get(
             agent_type, 
             evaluator_prompts["incident_response"]
-        ).copy()  # Create a copy to avoid modifying the original
+        ).copy()
         
-        # Add runtime configuration
-        evaluator["timestamp"] = self._get_timestamp()
-        evaluator["session_id"] = self._generate_session_id()
+        evaluator["timestamp"] = self.get_timestamp()
+        evaluator["session_id"] = self.generate_session_id()
         evaluator["agent_type"] = agent_type
         
         return evaluator
     
     def get_quality_thresholds(self) -> Dict[str, float]:
         """Get quality thresholds for all agent types (aligned with agent_config.py)"""
-        return {
-            "incident_response": 6.0,
-            "prevention": 5.5, 
-            "threat_intel": 6.0,
-            "compliance": 6.5,
-            "coordinator": 5.5
-        }
+        return QUALITY_THRESHOLDS
     
     def log_evaluation(self, agent_type: str, score: float, 
                       feedback: str, metadata: Optional[Dict] = None):
@@ -238,17 +231,15 @@ class LangfuseConfig:
         try:
             threshold = self.get_quality_thresholds().get(agent_type, 6.0)
             
-            # Create comprehensive metadata
             eval_metadata = {
                 "agent_type": agent_type,
-                "timestamp": self._get_timestamp(),
+                "timestamp": self.get_timestamp(),
                 "threshold": threshold,
                 "passed": score >= threshold,
                 "role_specific_evaluation": True,
                 **(metadata or {})
             }
             
-            # Log to Langfuse
             self.client.score(
                 name=f"{agent_type}_quality",
                 value=score,
@@ -257,7 +248,6 @@ class LangfuseConfig:
                 metadata=eval_metadata
             )
             
-            # Also log pass/fail as categorical
             self.client.score(
                 name=f"{agent_type}_quality_status",
                 value="PASS" if eval_metadata["passed"] else "FAIL",
@@ -265,7 +255,6 @@ class LangfuseConfig:
                 metadata=eval_metadata
             )
             
-            # Log role-specific metrics
             self.client.score(
                 name=f"{agent_type}_role_adherence",
                 value="WITHIN_ROLE" if eval_metadata["passed"] else "ROLE_BOUNDARY_ISSUE", 
@@ -298,7 +287,7 @@ class LangfuseConfig:
                     "tools_used": tools_used,
                     "expected_tools": expected_tools.get(agent_type, []),
                     "appropriate_usage": appropriate_usage,
-                    "timestamp": self._get_timestamp()
+                    "timestamp": self.get_timestamp()
                 }
             )
         except Exception as e:
@@ -317,7 +306,7 @@ class LangfuseConfig:
                     "agent_type": agent_type,
                     "handoffs_suggested": handoffs_suggested,
                     "appropriate_collaboration": appropriate_collaboration,
-                    "timestamp": self._get_timestamp()
+                    "timestamp": self.get_timestamp()
                 }
             )
         except Exception as e:
@@ -338,7 +327,7 @@ class LangfuseConfig:
                     "improvement": enhanced_score - original_score,
                     "agent_type": agent_type,
                     "enhancement_type": "role_focused_improvement",
-                    "timestamp": self._get_timestamp()
+                    "timestamp": self.get_timestamp()
                 }
             )
         except Exception as e:
@@ -350,7 +339,7 @@ class LangfuseConfig:
             return self.client.trace(
                 name=name,
                 metadata=metadata or {},
-                timestamp=self._get_timestamp()
+                timestamp=self.get_timestamp()
             )
         except Exception as e:
             print(f"Failed to create Langfuse trace: {e}")
@@ -363,12 +352,11 @@ class LangfuseConfig:
         except Exception as e:
             print(f"Failed to flush Langfuse client: {e}")
     
-    # Helper methods
-    def _get_timestamp(self) -> str:
+    def get_timestamp(self) -> str:
         """Get current timestamp in ISO format"""
         return datetime.now(timezone.utc).isoformat() + "Z"
     
-    def _generate_session_id(self) -> str:
+    def generate_session_id(self) -> str:
         """Generate unique session ID for tracking"""
         return str(uuid.uuid4())
     
@@ -411,7 +399,6 @@ class LangfuseConfig:
         }
 
 
-# Initialize global instance for use across the application
 try:
     langfuse_config = LangfuseConfig()
     print("Langfuse configuration initialized successfully with role-specific evaluators")
@@ -421,19 +408,16 @@ except Exception as e:
     langfuse_config = None
 
 
-# Export helper function for safe access
 def get_langfuse_client() -> Optional[Langfuse]:
     """Get Langfuse client instance safely"""
     return langfuse_config.client if langfuse_config else None
 
 
-# Export configuration getter
 def get_evaluator_config(agent_type: str) -> Dict[str, Any]:
     """Get evaluator configuration safely"""
     if langfuse_config:
         return langfuse_config.create_agent_evaluator(agent_type)
     else:
-        # Return minimal config if Langfuse is not available
         return {
             "name": f"{agent_type} evaluator (offline)",
             "threshold": langfuse_config.get_quality_thresholds().get(agent_type, 6.0) if langfuse_config else 6.0,

@@ -11,8 +11,10 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from conversation.history import ConversationHistory, Message
 from conversation.state_store import ConversationStateStore
-from conversation.config import conversation_config
+from conversation.config import ConversationConfig
 from conversation.summarizer import ConversationSummarizer
+from config.agent_config import AgentRole
+from workflow.state import ConversationTurn
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +24,15 @@ class ConversationManager:
     Enhanced manager that coordinates conversation using LangGraph checkpointing with retry logic and metadata tracking.
     """
     
-    def __init__(self, workflow, llm_client=None):
-        """Initialize with workflow and optional LLM client."""
+    def __init__(self, workflow, llm_client=None, config: Optional[ConversationConfig] = None):
+        """Initialize with workflow, optional LLM client, and injected configuration."""
         self.workflow = workflow
         self.store = ConversationStateStore()
         self.history_cache: Dict[str, ConversationHistory] = {}
-        self.config = conversation_config
+        self.config = config or ConversationConfig.from_env()
         self.initialized = False
         
-        # Initialize summarizer with LLM support
-        self.summarizer = ConversationSummarizer(llm_client) if llm_client else ConversationSummarizer()
+        self.summarizer = ConversationSummarizer(llm_client, self.config) if llm_client else ConversationSummarizer(config=self.config)
         
         # Metrics tracking
         self.metrics = {
@@ -49,12 +50,10 @@ class ConversationManager:
         # Force in-memory storage for simplicity
         use_persistent_storage = False
         
-        # Initialize the store and get the checkpointer
         await self.store.initialize(persist=use_persistent_storage, db_path=db_path)
         checkpointer = await self.store.get_checkpointer()
         
         if checkpointer:
-            # Compile workflow with checkpointer
             self.workflow.compile_with_checkpointer(checkpointer)
             self.initialized = True
             logger.info("Conversation manager initialized with in-memory storage (localStorage for frontend)")
@@ -81,7 +80,6 @@ class ConversationManager:
         
         start_time = time.time()
         
-        # Initialize conversation if new
         if thread_id not in self.history_cache:
             self.history_cache[thread_id] = ConversationHistory(
                 max_messages=self.config.max_messages_per_thread
@@ -90,62 +88,33 @@ class ConversationManager:
         
         history = self.history_cache[thread_id]
         
-        # Add user message with entity extraction
         entities = await self._extract_entities(message) if self.config.enable_smart_context_preservation else []
         history.add_user_message(message, entities=entities)
         
         try:
-            # Load previous state to maintain context - this populates the LangGraph state
-            config = {"configurable": {"thread_id": thread_id}}
-            previous_state_snapshot = await self.workflow.get_state(thread_id)
-            
-            # Handle StateSnapshot object properly - the values attribute should be the state dict
-            previous_state = {}
-            if previous_state_snapshot:
-                try:
-                    # StateSnapshot.values should be the actual state dictionary
-                    state_values = previous_state_snapshot.values
-                    
-                    # If it's a dictionary, use it directly
-                    if isinstance(state_values, dict):
-                        previous_state = state_values
-                    # If it's dict_values, convert back to dict
-                    elif hasattr(state_values, '__iter__'):
-                        # This might be a dict_values object, skip for now
-                        logger.warning(f"StateSnapshot.values is not a dict, type: {type(state_values)}")
-                        previous_state = {}
-                    else:
-                        previous_state = {}
-                except Exception as e:
-                    logger.error(f"Error accessing previous state: {e}")
-                    previous_state = {}
-            
-            logger.info(f"Thread {thread_id}: Previous state available: {bool(previous_state)}")
-            if previous_state:
-                logger.info(f"Thread {thread_id}: State contains active_agent: {previous_state.get('active_agent')}")
-                logger.info(f"Thread {thread_id}: State contains conversation_context: {previous_state.get('conversation_context')}")
-            
-            # Convert conversation history to the format expected by the workflow
             conversation_history = []
             for msg in history.messages:
-                conversation_history.append({
-                    "role": msg.role,
-                    "content": msg.content,
-                    "timestamp": msg.timestamp.isoformat(),
-                    "agent_used": msg.agent_used
-                })
+                agent_role = None
+                if msg.agent_used:
+                    try:
+                        for role in AgentRole:
+                            if role.value == msg.agent_used or msg.agent_used.lower().replace(' ', '_') == role.value:
+                                agent_role = role
+                                break
+                    except (AttributeError, ValueError):
+                        pass
+                
+                conversation_history.append(ConversationTurn(
+                    role=msg.role,
+                    content=msg.content,
+                    timestamp=msg.timestamp.isoformat(),
+                    agent_used=agent_role
+                ))
             
-            # If we have previous state, update the workflow state to maintain context
-            if previous_state:
-                logger.info(f"Updating workflow state with: active_agent={previous_state.get('active_agent')}, conversation_context={previous_state.get('conversation_context')}")
-                await self.workflow.update_state(thread_id, {
-                    "active_agent": previous_state.get("active_agent"),
-                    "conversation_context": previous_state.get("conversation_context"),
-                })
+            logger.info(f"Thread {thread_id}: Processing message with LangGraph checkpointer")
             
-            # Get workflow response - pass the query string directly
             response = await self.workflow.get_team_response(
-                query=message,  # Pass the message as query parameter
+                query=message,
                 thread_id=thread_id,
                 conversation_history=conversation_history
             )
@@ -155,15 +124,12 @@ class ConversationManager:
                 logger.warning(f"Workflow returned an unexpected type: {type(response)}. Wrapping it in a dict.")
                 response = {"final_answer": str(response)}
 
-            # Calculate processing time
             processing_time = time.time() - start_time
             
-            # Extract metadata from response if available
             agent_used = self._extract_agent_from_response(response)
             tools_used = self._extract_tools_from_response(response)
             confidence_score = self._extract_confidence_from_response(response)
             
-            # Add assistant message with metadata
             history.add_assistant_message(
                 response.get("final_answer", "No response found."),
                 agent_used=agent_used,
@@ -172,11 +138,9 @@ class ConversationManager:
                 processing_time=processing_time
             )
             
-            # Update metrics
-            self.metrics["total_messages"] += 2  # User + assistant
+            self.metrics["total_messages"] += 2
             self._update_avg_response_time(processing_time)
             
-            # Check if conversation needs summarization
             if len(history.messages) > self.config.auto_summarize_threshold:
                 await self._auto_summarize_if_needed(thread_id, history)
             
@@ -231,58 +195,68 @@ class ConversationManager:
             return []
     
     def _extract_agent_from_response(self, response: Dict[str, Any]) -> Optional[str]:
-        """Extract which agent provided the response."""
-        # Look for agent names in response
-        agent_indicators = {
-            "Sarah Chen": ["incident", "response", "breach", "attack"],
-            "Alex Rodriguez": ["prevention", "security controls", "architecture"],
-            "Dr. Kim Park": ["threat", "intelligence", "analysis", "actor"],
-            "Maria Santos": ["compliance", "regulation", "policy", "audit"]
-        }
+        """Extract which agent provided the response from structured data."""
+        if not isinstance(response, dict):
+            return "Cybersecurity Assistant"
         
-        response_lower = response.get("final_answer", "").lower() if isinstance(response, dict) else response.lower()
-        for agent, keywords in agent_indicators.items():
-            if any(keyword in response_lower for keyword in keywords):
-                return agent
+        # Use structured data from team_responses (ground truth)
+        team_responses = response.get("team_responses", [])
         
-        return "Cybersecurity Team"
+        if len(team_responses) == 1:
+            # Single agent response
+            return team_responses[0].agent_name
+        elif len(team_responses) > 1:
+            # Multi-agent response
+            return "Advisory Team"
+        elif response.get("response_strategy") == "general_query":
+            # General assistant response
+            return "General Assistant"
+        else:
+            # Direct or fallback response
+            return "Cybersecurity Assistant"
     
     def _extract_tools_from_response(self, response: Dict[str, Any]) -> List[str]:
-        """Extract which tools were used based on response content."""
+        """Extract which tools were used from structured data (ground truth)."""
         if not isinstance(response, dict):
             return []
 
         tools = []
-        final_answer = response.get("final_answer", "").lower()
         
-        if "searching" in final_answer or "found information" in final_answer:
-            tools.append("web_search")
-        if "knowledge base" in final_answer:
-            tools.append("knowledge_search")
-        if "analysis" in final_answer and "threat" in final_answer:
-            tools.append("threat_analysis")
-        
-        # Also check for explicitly passed tool usage
-        if "team_responses" in response:
-            for resp in response["team_responses"]:
-                if resp.response.tools_used:
-                    tools.extend([tool.tool_name for tool in resp.response.tools_used])
+        # Use structured data from team_responses (ground truth)
+        team_responses = response.get("team_responses", [])
+        for team_response in team_responses:
+            if hasattr(team_response, 'tools_used') and team_response.tools_used:
+                tools.extend([tool.tool_name for tool in team_response.tools_used])
+            elif hasattr(team_response, 'response') and hasattr(team_response.response, 'tools_used') and team_response.response.tools_used:
+                tools.extend([tool.tool_name for tool in team_response.response.tools_used])
 
         return sorted(list(set(tools)))
     
     def _extract_confidence_from_response(self, response: Dict[str, Any]) -> Optional[float]:
-        """Extract confidence score from response."""
+        """Extract confidence score from structured data (ground truth)."""
         if not isinstance(response, dict):
             return 0.5
+        
+        # Use structured data from workflow state (ground truth)
+        quality_score = response.get("quality_score")
+        if quality_score is not None:
+            # Convert 10-point scale to 0-1 scale
+            return min(quality_score / 10.0, 1.0)
+        
+        # Fallback to team response confidence if available
+        team_responses = response.get("team_responses", [])
+        if team_responses:
+            # Average confidence across team responses
+            confidence_scores = []
+            for team_response in team_responses:
+                if hasattr(team_response, 'response') and hasattr(team_response.response, 'confidence_score'):
+                    confidence_scores.append(team_response.response.confidence_score)
             
-        final_answer = response.get("final_answer", "")
-        # Simple heuristic based on response characteristics
-        if len(final_answer) > 500 and "recommend" in final_answer.lower():
-            return 0.9
-        elif len(final_answer) > 200:
-            return 0.7
-        else:
-            return 0.5
+            if confidence_scores:
+                return sum(confidence_scores) / len(confidence_scores)
+        
+        # Final fallback
+        return 0.7
     
     def _update_avg_response_time(self, processing_time: float):
         """Update average response time metric."""
@@ -315,9 +289,8 @@ class ConversationManager:
             return
         
         try:
-            # Create summary of older messages
             messages_to_summarize = history.messages[:-self.config.max_messages_per_thread//2]
-            if len(messages_to_summarize) > 5:  # Only summarize if worth it
+            if len(messages_to_summarize) > 5:
                 
                 messages_dict = [
                     {

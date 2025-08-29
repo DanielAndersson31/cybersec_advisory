@@ -16,16 +16,14 @@ class Message(BaseModel):
     content: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
-    # Metadata tracking
-    agent_used: Optional[str] = None  # Which agent responded
-    tools_used: List[str] = Field(default_factory=list)  # Which tools were called
+    agent_used: Optional[str] = None
+    tools_used: List[str] = Field(default_factory=list)
     confidence_score: Optional[float] = None
     processing_time: Optional[float] = None
     message_id: str = Field(default_factory=lambda: f"msg_{datetime.now().timestamp()}")
     
-    # Context preservation flags
-    is_important: bool = False  # Should be preserved during context truncation
-    contains_entities: List[str] = Field(default_factory=list)  # Named entities mentioned
+    is_important: bool = False
+    contains_entities: List[str] = Field(default_factory=list)
 
 
 class ConversationHistory:
@@ -79,20 +77,16 @@ class ConversationHistory:
     def _trim_history(self):
         """Intelligent message trimming preserving important context."""
         if len(self.messages) > self.max_messages:
-            # Preserve important messages and recent messages
             important_messages = [msg for msg in self.messages if msg.is_important]
             
-            # Calculate how many recent messages we can keep
             recent_count = self.max_messages - len(important_messages)
             if recent_count > 0:
-                # Get recent messages that aren't already marked important
                 recent_messages = [
                     msg for msg in self.messages[-recent_count:] 
                     if not msg.is_important
                 ]
                 self.messages = important_messages + recent_messages
             else:
-                # If too many important messages, keep the most recent important ones
                 self.messages = important_messages[-self.max_messages:]
     
     def get_langchain_messages(self) -> List:

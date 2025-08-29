@@ -9,7 +9,6 @@ class Settings(BaseSettings):
     """
     Main settings class for the application, loaded from .env file.
     """
-    # General settings
     APP_NAME: str = "Cybersecurity Multi-Agent Advisory System"
     environment: str = Field(
         ...,
@@ -22,12 +21,11 @@ class Settings(BaseSettings):
         description="Logging level for the application"
     )
     default_model: str = Field(
-        "gpt-4o",  # Sensible default
+        "gpt-4o",
         env="DEFAULT_MODEL",
         description="Default language model for agents"
     )
 
-    # Application Server Settings
     api_host: str = Field(
         ...,
         env="API_HOST",
@@ -41,7 +39,6 @@ class Settings(BaseSettings):
         description="Port number for the API server"
     )
     
-    # Database Configuration
     database_url: str = Field(
         ...,
         env="DATABASE_URL",
@@ -49,7 +46,6 @@ class Settings(BaseSettings):
         description="Database connection URL for LangGraph checkpoints"
     )
     
-    # LLM API Keys
     openai_api_key: SecretStr = Field(
         ...,
         env="OPENAI_API_KEY",
@@ -61,7 +57,6 @@ class Settings(BaseSettings):
         description="Tavily API key for web search (optional)"
     )
     
-    # Langfuse Observability (Phase 2)
     langfuse_public_key: SecretStr = Field(
         ...,
         env="LANGFUSE_PUBLIC_KEY",
@@ -78,7 +73,6 @@ class Settings(BaseSettings):
         description="Langfuse host URL"
     )
     
-    # MCP Server Configuration (Phase 3)
     mcp_server_host: str = Field(
         ...,
         env="MCP_SERVER_HOST",
@@ -92,7 +86,6 @@ class Settings(BaseSettings):
         description="MCP server port number"
     )
     
-    # External API Keys (Optional)
     virustotal_api_key: SecretStr = Field(
         ...,
         env="VIRUSTOTAL_API_KEY",
@@ -169,5 +162,4 @@ class Settings(BaseSettings):
         return str(secret_value)
 
 
-# Global settings instance - single source of truth
 settings = Settings()

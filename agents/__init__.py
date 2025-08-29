@@ -1,19 +1,15 @@
 """
-This package contains the definitions for the specialist agents.
+This package contains the specialist agent infrastructure.
+Agents are now created dynamically via AgentFactory with centralized prompts.
 """
 
 from agents.base_agent import BaseSecurityAgent
-from agents.incident_responder import IncidentResponseAgent
-from agents.prevention_specialist import PreventionAgent
-from agents.threat_analyst import ThreatIntelAgent
-from agents.compliance_specialist import ComplianceAgent
-from agents.factory import AgentFactory
+from agents.factory import AgentFactory, DynamicSecurityAgent
+from agents.prompts import AgentPrompts
 
 __all__ = [
     "BaseSecurityAgent",
-    "IncidentResponseAgent",
-    "PreventionAgent",
-    "ThreatIntelAgent",
-    "ComplianceAgent",
     "AgentFactory",
+    "DynamicSecurityAgent",
+    "AgentPrompts",
 ]

@@ -25,11 +25,9 @@ class ConversationStateStore:
         This must be called before get_checkpointer.
         """
         if persist:
-            # Create the context manager for the checkpointer
             self._checkpointer_context = AsyncSqliteSaver.from_conn_string(db_path)
             logger.info(f"AsyncSqliteSaver context created for {db_path}")
         else:
-            # MemorySaver doesn't need a context
             self.checkpointer = MemorySaver()
             logger.info("Using in-memory storage")
 
@@ -38,7 +36,6 @@ class ConversationStateStore:
         Enters the async context if needed and returns the usable checkpointer object.
         """
         if self._checkpointer_context and not self.checkpointer:
-            # Manually enter the async context and store the checkpointer instance
             self.checkpointer = await self._checkpointer_context.__aenter__()
             logger.info("Entered AsyncSqliteSaver context, checkpointer is active.")
         return self.checkpointer

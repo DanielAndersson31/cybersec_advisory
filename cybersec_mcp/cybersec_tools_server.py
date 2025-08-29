@@ -4,6 +4,14 @@ Complete Cybersecurity MCP Server
 Provides all cybersecurity tools for the multi-agent advisory system.
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to path when run directly
+if __name__ == "__main__":
+    project_root = Path(__file__).parent.parent
+    sys.path.insert(0, str(project_root))
+
 import logging
 from typing import Dict, Any, List, Optional
 from fastmcp import FastMCP

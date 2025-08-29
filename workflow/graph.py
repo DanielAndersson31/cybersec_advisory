@@ -12,6 +12,7 @@ from langfuse import observe
 from workflow.state import WorkflowState
 from workflow.nodes import WorkflowNodes
 from workflow.fallbacks import ErrorHandler
+from workflow.schemas import ResponseStrategy
 from agents.factory import AgentFactory
 from langchain_openai import ChatOpenAI
 from config.settings import settings
@@ -42,7 +43,8 @@ class CybersecurityTeamGraph:
 
         self.factory = AgentFactory(llm_client=llm_client)
         
-        self.toolkit = CybersecurityToolkit()
+        # Use the toolkit from the factory to avoid duplicate dependencies
+        self.toolkit = self.factory.toolkit
         self.nodes = WorkflowNodes(
             agent_factory=self.factory,
             toolkit=self.toolkit,
@@ -91,7 +93,6 @@ class CybersecurityTeamGraph:
         workflow.add_node("general_response", self.nodes.general_response)
         workflow.add_node("direct_response", self.nodes.direct_response)
         workflow.add_node("consult_agent", self.nodes.consult_agent)
-        workflow.add_node("coordinate", self.nodes.coordinate_responses)
         workflow.add_node("synthesis", self.nodes.synthesize_responses)
         
         # Add quality check if enabled
@@ -126,15 +127,8 @@ class CybersecurityTeamGraph:
         # General responses skip quality checks and go straight to end
         workflow.add_edge("general_response", END)
         
-        # Agent consultation routing - conditional based on single vs multi-agent
-        workflow.add_conditional_edges(
-            "consult_agent",
-            self._route_after_consultation,
-            {
-                "synthesis": "synthesis",
-                "coordinate": "coordinate"
-            }
-        )
+        # Agent consultation always goes to synthesis (smart synthesis handles both cases)
+        workflow.add_edge("consult_agent", "synthesis")
         
         # After synthesis, go to quality check
         if self.enable_quality_checks:
@@ -143,8 +137,6 @@ class CybersecurityTeamGraph:
             workflow.add_edge("synthesis", END)
         
         # Quality check flow if enabled
-        if self.enable_quality_checks:
-            workflow.add_edge("coordinate", "quality")
             
             # After quality check, check RAG if tools were used
             workflow.add_conditional_edges(
@@ -157,54 +149,24 @@ class CybersecurityTeamGraph:
             )
             
             workflow.add_edge("rag_quality", END)
-        else:
-            workflow.add_edge("coordinate", END)
         
         return workflow
 
-
-
     def _route_by_strategy(self, state: WorkflowState) -> Literal["direct", "general_query", "single_agent", "multi_agent"]:
-        """Route based on triage strategy decision."""
-        strategy = state.get("response_strategy", "single_agent")
+        """Route based on triage strategy decision - now using enum values."""
+        strategy = state.get("response_strategy", ResponseStrategy.SINGLE_AGENT.value)
         
-        if strategy == "direct":
-            logger.info("Routing to direct coordinator response (cybersecurity)")
-            return "direct"
-        elif strategy == "general_query":
-            logger.info("Routing to general assistant response")
-            return "general_query"
-        elif strategy == "single_agent":
-            logger.info(f"Routing to single agent: {state.get('agents_to_consult', [])}")
-            return "single_agent"
+        # Use enum for type safety and IDE support
+        if strategy == ResponseStrategy.DIRECT.value:
+            return ResponseStrategy.DIRECT.value
+        elif strategy == ResponseStrategy.GENERAL_QUERY.value:
+            return ResponseStrategy.GENERAL_QUERY.value
+        elif strategy == ResponseStrategy.SINGLE_AGENT.value:
+            return ResponseStrategy.SINGLE_AGENT.value
         else:  # multi_agent
-            logger.info(f"Routing to multi-agent consultation: {state.get('agents_to_consult', [])}")
-            return "multi_agent"
+            return ResponseStrategy.MULTI_AGENT.value
     
-    def _route_after_consultation(self, state: WorkflowState) -> Literal["synthesis", "coordinate"]:
-        """
-        Route after agent consultation based on whether single or multi-agent response.
-        """
-        team_responses = state.get("team_responses", [])
-        needs_consensus = state.get("needs_consensus", False)
-        
-        # If only one agent responded and consensus isn't needed, synthesize directly.
-        if len(team_responses) == 1 and not needs_consensus:
-            logger.info(f"Single agent response from {team_responses[0].agent_name} - routing to synthesis.")
-            return "synthesis"
-        else:
-            # Multiple agents or consensus needed - use coordinator
-            logger.info(f"Multiple agents ({len(team_responses)}) or consensus needed - routing to coordinator")
-            return "coordinate"
 
-    def _should_consult(self, state: WorkflowState) -> Literal["consult", "coordinate"]:
-        """Legacy method - kept for backward compatibility."""
-        if state["agents_to_consult"]:
-            logger.info(f"Proceeding to consult {len(state['agents_to_consult'])} agents in parallel.")
-            return "consult"
-        else:
-            logger.info("No agents to consult, proceeding directly to synthesis.")
-            return "coordinate"
 
     def _should_check_rag(self, state: WorkflowState) -> Literal["check_rag", "finish"]:
         """
@@ -227,10 +189,32 @@ class CybersecurityTeamGraph:
         
         return "finish"
     
+    def _create_initial_state(
+        self, 
+        query: str, 
+        thread_id: str, 
+        conversation_history: list = None
+    ) -> dict:
+        """
+        Create initial workflow state as a dictionary.
+        WorkflowState extends MessagesState (TypedDict), not BaseModel.
+        """
+        return {
+            "query": query,
+            "thread_id": thread_id,
+            "conversation_history": conversation_history or [],
+            "messages": [],
+            "team_responses": [],
+            "agents_to_consult": [],
+            "error_count": 0,
+            "quality_passed": True,
+            "needs_consensus": False,
+        }
+    
     @observe(name="team_response")
     async def get_team_response(self, query: str, thread_id: str = "default", conversation_history: list = None) -> dict:
         """
-        Get a response from the cybersecurity team.
+        Get a response from the cybersecurity team - now using proper state initialization.
         
         Args:
             query: User query
@@ -249,26 +233,8 @@ class CybersecurityTeamGraph:
             )
         
         try:
-            # Initialize state
-            initial_state = {
-                "query": query,
-                "thread_id": thread_id,
-                "response_strategy": None,
-                "estimated_complexity": None,
-                "messages": [],
-                "team_responses": [],
-                "agents_to_consult": [],
-                "current_agent": None,
-                "final_answer": None,
-                "needs_consensus": False,
-                "quality_score": None,
-                "quality_passed": True,
-                "rag_grounded": None,
-                "rag_relevance_score": None,
-                "error_count": 0,
-                "last_error": None,
-                "conversation_history": conversation_history or []
-            }
+            # Use the new helper method for clean state initialization
+            initial_state = self._create_initial_state(query, thread_id, conversation_history)
             
             # Run the workflow
             config = {"configurable": {"thread_id": thread_id}}

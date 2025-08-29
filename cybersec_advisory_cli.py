@@ -12,34 +12,25 @@ import typer
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
+from langchain_openai import ChatOpenAI
 
-# --- Environment and Path Setup ---
-# 1. Add project root to Python's import path.
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-# 2. Explicitly load the .env file BEFORE other imports.
 dotenv_path = project_root / '.env'
 if dotenv_path.exists():
     load_dotenv(dotenv_path=dotenv_path)
-    # Optional: print success message for debugging
-    # print(f"SUCCESS: Loaded environment variables from {dotenv_path}")
 else:
     print(f"WARNING: .env file not found at {dotenv_path}.")
 
-
-# --- Logging Setup ---
-# Initialize logging before other imports
 from utils.logging import setup_logging
+from conversation.manager import ConversationManager
+from conversation.config import ConversationConfig
+from workflow.graph import CybersecurityTeamGraph
+from config.settings import settings
 
-# Set up logging with INFO level for production
 setup_logging(level=logging.INFO, log_to_console=True)
 logger = logging.getLogger(__name__)
-
-# --- Application Imports ---
-# Now that the environment is loaded, we can safely import application components.
-from conversation.manager import ConversationManager
-from workflow.graph import CybersecurityTeamGraph
 
 console = Console()
 cli_app = typer.Typer()
@@ -48,27 +39,26 @@ async def initialize_system():
     """
     Initializes all necessary components for the advisory system with enhanced conversation features.
     """
-    logger.info("🚀 Initializing Enhanced Cybersecurity Advisory System...")
-    console.print("[bold green]Initializing Enhanced Cybersecurity Advisory System...[/bold green]")
+    logger.info("🚀 Initializing Cybersecurity Advisory System...")
+    console.print("[bold green]Initializing Cybersecurity Advisory System...[/bold green]")
     
-    # 1. Initialize the workflow graph (which now handles its own clients)
     workflow = CybersecurityTeamGraph()
-    
-    # 2. Create shared LLM client for conversation features
-    from langchain_openai import ChatOpenAI
-    from config.settings import settings
     llm_client = ChatOpenAI(
         model=settings.default_model,
         temperature=0.1,
         max_tokens=4000
     )
     
-    # 3. Initialize the enhanced conversation manager with LLM support
-    manager = ConversationManager(workflow=workflow, llm_client=llm_client)
-    await manager.initialize() # Async initialization
+    config = ConversationConfig.from_env()
+    manager = ConversationManager(
+        workflow=workflow, 
+        llm_client=llm_client,
+        config=config
+    )
+    await manager.initialize()
     
-    logger.info("✅ Enhanced system initialized successfully")
-    console.print("[bold green]Enhanced system initialized with LLM-powered conversation features.[/bold green]")
+    logger.info("System initialized successfully")
+    console.print("[bold green]System initialized successfully.[/bold green]")
     return manager
 
 @cli_app.command()
@@ -87,13 +77,12 @@ def chat(
                 console.print("[bold red]System initialization failed. Exiting.[/bold red]")
                 raise typer.Exit(code=1)
 
-            # If an initial query was provided, handle it first.
             if query:
                 console.print(Panel(f"[bold yellow]Query:[/bold yellow] {query}", title="User Input", border_style="yellow"))
-                response = await manager.chat(message=query, thread_id=thread_id)
-                console.print(Panel(response, title="Team Response", border_style="green"))
+                response_state = await manager.chat(message=query, thread_id=thread_id)
+                final_answer = response_state.get("final_answer", "No response generated")
+                console.print(Panel(final_answer, title="Team Response", border_style="green"))
 
-            # Enter interactive chat loop
             logger.info("💬 Starting interactive chat mode")
             console.print("[bold cyan]Entering interactive chat mode. Type 'exit', 'quit', or 'q' to end.[/bold cyan]")
             while True:
@@ -105,8 +94,9 @@ def chat(
                     break
 
                 logger.info(f"📝 Processing user query: '{user_input[:50]}...'")
-                response = await manager.chat(message=user_input, thread_id=thread_id)
-                console.print(Panel(response, title="Team Response", border_style="green"))
+                response_state = await manager.chat(message=user_input, thread_id=thread_id)
+                final_answer = response_state.get("final_answer", "No response generated")
+                console.print(Panel(final_answer, title="Team Response", border_style="green"))
 
         except (KeyboardInterrupt, EOFError):
             console.print("\n[bold cyan]Session interrupted. Goodbye![/bold cyan]")

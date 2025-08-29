@@ -2,7 +2,6 @@
 Configuration system for conversation management.
 """
 
-from typing import Optional
 import os
 
 
@@ -50,7 +49,6 @@ class ConversationConfig:
         """Create config from environment variables."""
         config = cls()
         
-        # Override defaults with environment variables if present
         config.max_messages_per_thread = int(os.getenv('CONV_MAX_MESSAGES', '20'))
         config.enable_auto_retry = os.getenv('CONV_ENABLE_RETRY', 'true').lower() == 'true'
         config.max_retry_attempts = int(os.getenv('CONV_MAX_RETRIES', '3'))
@@ -62,5 +60,7 @@ class ConversationConfig:
         return config
 
 
-# Global configuration instance
-conversation_config = ConversationConfig.from_env()
+# For backward compatibility, provide a factory function
+def get_default_config() -> ConversationConfig:
+    """Factory function to create default configuration."""
+    return ConversationConfig.from_env()

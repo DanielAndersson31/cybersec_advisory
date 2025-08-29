@@ -4,7 +4,7 @@ from conversation.manager import ConversationManager
 from conversation.history import ConversationHistory, Message
 from conversation.state_store import ConversationStateStore
 from conversation.summarizer import ConversationSummarizer
-from conversation.config import ConversationConfig, conversation_config
+from conversation.config import ConversationConfig
 
 __all__ = [
     "ConversationManager",
@@ -12,6 +12,5 @@ __all__ = [
     "Message",
     "ConversationStateStore",
     "ConversationSummarizer",
-    "ConversationConfig",
-    "conversation_config"
+    "ConversationConfig"
 ]

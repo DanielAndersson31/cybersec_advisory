@@ -1,23 +1,22 @@
 """
-MCP Package
+Cybersecurity MCP Package
 
-Model Context Protocol implementation for external cybersecurity tool integrations.
-For internal tools, use cybersec_tools.py instead.
+Direct tool implementation for the cybersecurity advisory system.
+Uses efficient in-process tool execution via CybersecurityToolkit.
 
 This package provides:
-- ExternalMCPClient: For Claude Desktop and external integrations  
-- MCP Server: For exposing tools via MCP protocol
-- Individual Tools: For building custom integrations
+- CybersecurityToolkit: Main toolkit for direct tool access (production use)
+- cybersec_tools_server: MCP server for testing with MCP Inspector
+- Individual Tools: Specialized cybersecurity analysis tools
 """
 
 # Import main components for easy access
-from cybersec_mcp.cybersec_client import ExternalMCPClient, CybersecurityMCPClient
+from cybersec_mcp.cybersec_tools import CybersecurityToolkit
 
 # Tools are available through the tools subpackage
 from cybersec_mcp import tools
 
 __all__ = [
-    'ExternalMCPClient',       # New preferred name
-    'CybersecurityMCPClient',  # Backward compatibility
+    'CybersecurityToolkit',
     'tools'
 ]

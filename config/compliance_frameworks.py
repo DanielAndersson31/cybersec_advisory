@@ -99,7 +99,6 @@ FRAMEWORK_REQUIREMENTS = {
 }
 
 
-# Framework applicability mapping
 APPLICABILITY = {
     "by_data_type": {
         "personal_data": [ComplianceFramework.GDPR],

@@ -73,12 +73,12 @@ class WebSearchTool(BaseTool):
         Detect temporal intent in the query and return appropriate Tavily parameters.
         """
         query_lower = query.lower()
-        logger.info(f"WEB SEARCH DEBUG: Detecting temporal intent for query: '{query}'")
+        logger.debug(f"Detecting temporal intent for query: '{query}'")
         
         # TIME QUERIES - These CAN use web search but need special handling
         time_keywords = ['time', 'clock', 'timezone', 'what time is it']
         if any(keyword in query_lower for keyword in time_keywords):
-            logger.info(f"WEB SEARCH DEBUG: Time query detected! Keywords found: {[k for k in time_keywords if k in query_lower]}")
+            logger.debug(f"Time query detected! Keywords found: {[k for k in time_keywords if k in query_lower]}")
             return {
                 'temporal_detected': 'time_query', 
                 'topic': 'general',
@@ -132,11 +132,11 @@ class WebSearchTool(BaseTool):
         Use LLM to craft better search terms for optimal results.
         """
         try:
-            logger.info(f"WEB SEARCH DEBUG: Crafting search query. Original: '{user_query}', preserve_query: {preserve_query}")
+            logger.debug(f"Crafting search query. Original: '{user_query}', preserve_query: {preserve_query}")
             
             # If preserve_query is True (for time queries), use original query
             if preserve_query:
-                logger.info(f"WEB SEARCH DEBUG: Preserving original query for time-sensitive search")
+                logger.debug(f"Preserving original query for time-sensitive search")
                 return user_query
                 
             # Remove any years from the query before LLM sees it - let temporal parameters handle time filtering
@@ -212,12 +212,10 @@ Return ONLY the enhanced search query focused on the main topic, nothing else.""
             temporal_params = self._detect_temporal_intent(query)
             logger.info(f"Temporal detection for '{query}': {temporal_params}")
             
-            # --- Query Enhancement DISABLED for testing ---
             # Use LLM to craft better search terms (preserve original for time queries)
-            # preserve_query = temporal_params.get('preserve_query', False)
-            # enhanced_query = await self._craft_search_query(query, preserve_query)
-            enhanced_query = query # Use original query directly
-            logger.info(f"Original query: '{query}' → Using raw query (Enhancement DISABLED)")
+            preserve_query = temporal_params.get('preserve_query', False)
+            enhanced_query = await self._craft_search_query(query, preserve_query)
+            logger.info(f"Original query: '{query}' → Enhanced query: '{enhanced_query}'")
             
             # Build search parameters
             search_params = {
@@ -259,7 +257,7 @@ Return ONLY the enhanced search query focused on the main topic, nothing else.""
                 logger.info(f"Applied parameters: {', '.join(time_filter_applied)}")
             
             # Execute search with parameters
-            logger.info(f"WEB SEARCH DEBUG: Sending to Tavily API with params: {search_params}")
+            logger.debug(f"Sending to Tavily API with params: {search_params}")
             results = await self.tavily.search(**search_params)
 
             # ---> FIX: If basic search fails, retry with advanced search <---
@@ -269,21 +267,21 @@ Return ONLY the enhanced search query focused on the main topic, nothing else.""
                 results = await self.tavily.search(**search_params)
                 logger.info("Advanced search completed after basic search failed.")
 
-            logger.info(f"WEB SEARCH DEBUG: Raw Tavily response keys: {list(results.keys()) if isinstance(results, dict) else 'Not a dict'}")
-            logger.info(f"WEB SEARCH DEBUG: Raw Tavily response: {results}")
+            logger.debug(f"Raw Tavily response keys: {list(results.keys()) if isinstance(results, dict) else 'Not a dict'}")
+            logger.debug(f"Raw Tavily response: {results}")
             
             # Format results with validation
             formatted_results = []
             raw_results = results.get("results", [])
-            logger.info(f"WEB SEARCH DEBUG: Found {len(raw_results)} raw results from Tavily")
+            logger.debug(f"Found {len(raw_results)} raw results from Tavily")
             
             for i, result in enumerate(raw_results):
-                logger.info(f"WEB SEARCH DEBUG: Processing result {i+1}:")
-                logger.info(f"  - Title: {result.get('title', 'NO TITLE')}")
-                logger.info(f"  - URL: {result.get('url', 'NO URL')}")
-                logger.info(f"  - Content preview: {result.get('content', 'NO CONTENT')[:100]}...")
-                logger.info(f"  - Score: {result.get('score', 'NO SCORE')}")
-                logger.info(f"  - Published date: {result.get('published_date', 'NO DATE')}")
+                logger.debug(f"Processing result {i+1}:")
+                logger.debug(f"  - Title: {result.get('title', 'NO TITLE')}")
+                logger.debug(f"  - URL: {result.get('url', 'NO URL')}")
+                logger.debug(f"  - Content preview: {result.get('content', 'NO CONTENT')[:100]}...")
+                logger.debug(f"  - Score: {result.get('score', 'NO SCORE')}")
+                logger.debug(f"  - Published date: {result.get('published_date', 'NO DATE')}")
                 
                 try:
                     formatted_result = WebSearchResult(
@@ -294,7 +292,7 @@ Return ONLY the enhanced search query focused on the main topic, nothing else.""
                         published_date=result.get("published_date")
                     )
                     formatted_results.append(formatted_result)
-                    logger.info(f"WEB SEARCH DEBUG: Successfully formatted result {i+1}")
+                    logger.debug(f"Successfully formatted result {i+1}")
                 except ValidationError as e:
                     logger.warning(f"Skipping invalid search result {i+1}: {e}")
                     continue
@@ -313,10 +311,10 @@ Return ONLY the enhanced search query focused on the main topic, nothing else.""
             else:
                 logger.info(f"Found {len(formatted_results)} results with filters: {', '.join(time_filter_applied)}")
             
-            logger.info(f"WEB SEARCH DEBUG: Final response summary:")
-            logger.info(f"  - Original query: '{response.query}'")
-            logger.info(f"  - Enhanced query: '{response.enhanced_query}'")
-            logger.info(f"  - Time filters: '{response.time_filter_applied}'")
+            logger.debug(f"Final response summary:")
+            logger.debug(f"  - Original query: '{response.query}'")
+            logger.debug(f"  - Enhanced query: '{response.enhanced_query}'")
+            logger.debug(f"  - Time filters: '{response.time_filter_applied}'")
             logger.info(f"  - Total results: {response.total_results}")
             logger.info(f"  - Status: '{response.status}'")
             

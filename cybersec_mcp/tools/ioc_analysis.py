@@ -2,6 +2,7 @@
 Simple IOC analysis tool using VirusTotal API with Pydantic models.
 """
 
+import asyncio
 import logging
 import re
 from typing import List, Optional, Literal, Dict
@@ -9,12 +10,10 @@ import httpx
 from pydantic import BaseModel, Field, ConfigDict
 from config.settings import settings
 from langchain_core.tools import BaseTool
-import asyncio
 
 logger = logging.getLogger(__name__)
 
 
-# Pydantic Models
 class IOCType(BaseModel):
     """Supported IOC types"""
     type: Literal["ip", "domain", "url", "md5", "sha1", "sha256", "unknown"]
@@ -43,10 +42,13 @@ class IOCAnalysisResponse(BaseModel):
 class IOCAnalysisTool(BaseTool):
     """Tool for analyzing indicators of compromise using VirusTotal API"""
     name: str = "ioc_analysis"
-    description: str = "Analyze an Indicator of Compromise (IOC) like IP address, domain, or file hash."
+    description: str = "Analyze IOCs (single or batch). For batch analysis, provide indicators as comma-separated string."
     vt_api_key: str = Field(default_factory=lambda: settings.get_secret("virustotal_api_key"))
     base_url: str = "https://www.virustotal.com/api/v3"
     patterns: Dict[str, re.Pattern] = {}
+    
+    malicious_threshold: int = Field(default=3, description="Minimum detections to classify as malicious")
+    suspicious_threshold: int = Field(default=3, description="Minimum detections to classify as suspicious")
 
     model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
 
@@ -55,7 +57,6 @@ class IOCAnalysisTool(BaseTool):
         if not self.vt_api_key:
             raise ValueError("VIRUSTOTAL_API_KEY not configured in settings")
         
-        # Regex patterns for IOC type detection
         self.patterns = {
             "ip": re.compile(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"),
             "domain": re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]?\.[a-zA-Z]{2,}$"),
@@ -65,13 +66,23 @@ class IOCAnalysisTool(BaseTool):
             "sha256": re.compile(r"^[a-fA-F0-9]{64}$")
         }
 
-    def _run(self, indicator: str) -> IOCResult:
-        """Analyze a single indicator using VirusTotal."""
-        return asyncio.run(self.analyze_indicator(indicator))
+    def _run(self, indicator: str) -> IOCAnalysisResponse:
+        """Analyze indicator(s) using VirusTotal. Supports single indicator or comma-separated batch."""
+        return asyncio.run(self._arun(indicator))
 
-    async def _arun(self, indicator: str) -> IOCResult:
-        """Analyze a single indicator using VirusTotal."""
-        return await self.analyze_indicator(indicator)
+    async def _arun(self, indicator: str) -> IOCAnalysisResponse:
+        """Analyze indicator(s) using VirusTotal. Supports single indicator or comma-separated batch."""
+        if ',' in indicator:
+            indicators = [ioc.strip() for ioc in indicator.split(',') if ioc.strip()]
+            return await self.analyze_indicators(indicators)
+        else:
+            result = await self.analyze_indicator(indicator)
+            return IOCAnalysisResponse(
+                status="success",
+                query=indicator,
+                total_indicators=1,
+                results=[result]
+            )
 
     async def analyze_indicators(self, indicators: List[str]) -> IOCAnalysisResponse:
         """
@@ -192,10 +203,10 @@ class IOCAnalysisTool(BaseTool):
         suspicious = stats.get("suspicious", 0)
         total = sum(stats.values())
         
-        # Determine classification
-        if malicious > 3:
+        # Determine classification using configurable thresholds
+        if malicious >= self.malicious_threshold:
             classification = "malicious"
-        elif suspicious > 3 or malicious > 0:
+        elif suspicious >= self.suspicious_threshold or malicious > 0:
             classification = "suspicious"
         else:
             classification = "clean"

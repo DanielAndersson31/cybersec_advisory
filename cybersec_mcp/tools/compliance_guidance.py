@@ -9,7 +9,6 @@ from langchain_core.tools import BaseTool
 from datetime import timedelta
 import logging
 
-# Import configuration data only
 from config.compliance_frameworks import (
     ComplianceFramework,
     BREACH_TIMELINES,
@@ -18,9 +17,6 @@ from config.compliance_frameworks import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# Pydantic Models
 class BreachTimeline(BaseModel):
     """Breach notification timeline information"""
     authority_notification: Optional[str] = None
@@ -146,15 +142,12 @@ class ComplianceGuidanceTool(BaseTool):
             ComplianceGuidanceResponse with guidance and recommendations
         """
         try:
-            # If specific framework requested
             if framework:
                 return self._get_framework_guidance(framework)
             
-            # If data type or region provided, find applicable frameworks
             if data_type or region:
                 return self._get_recommendations(data_type, region, incident_type)
             
-            # Return general compliance overview
             return self._get_overview()
             
         except Exception as e:
@@ -168,10 +161,8 @@ class ComplianceGuidanceTool(BaseTool):
     def _get_framework_guidance(self, framework_name: str) -> ComplianceGuidanceResponse:
         """Get detailed guidance for a specific framework"""
         try:
-            # Convert string to enum
             fw_enum = ComplianceFramework(framework_name.lower())
             
-            # Get framework details
             fw_info = self._get_framework_summary(fw_enum)
             if not fw_info:
                 return ComplianceGuidanceResponse(
@@ -180,10 +171,8 @@ class ComplianceGuidanceTool(BaseTool):
                     error=f"Framework {framework_name} not found"
                 )
             
-            # Get breach timelines
             breach_timeline = self._format_breach_timeline(fw_enum)
             
-            # Create guidance
             guidance = FrameworkGuidance(
                 framework=fw_enum.value.upper(),
                 full_name=fw_info["name"],

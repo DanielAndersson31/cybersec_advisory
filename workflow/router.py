@@ -9,34 +9,84 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from pydantic import ValidationError
 from langfuse import observe
+from dataclasses import dataclass
 
 from config.agent_config import AgentRole, INTERACTION_RULES, AGENT_TOOL_PERMISSIONS, TOOL_DEFINITIONS
-from workflow.schemas import RoutingDecision, CybersecurityClassification
+from workflow.schemas import RoutingDecision, CybersecurityClassification, ResponseStrategy
 
 from cybersec_mcp.cybersec_tools import CybersecurityToolkit
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class FollowUpIndicators:
+    """Encapsulates logic for detecting follow-up queries"""
+    strong_followup_phrases: List[str]
+    new_topic_phrases: List[str]
+    
+    @classmethod
+    def default(cls):
+        return cls(
+            strong_followup_phrases=[
+                # Direct references to previous conversation
+                "how do i", "how can i", "what's the next step", "next step",
+                "how to", "walk me through", "guide me through", "show me how",
+                "what should i do", "how should i", "can you help me",
+                
+                # Continuation words
+                "also", "additionally", "furthermore", "and then", "after that",
+                "what about", "what if", "but how", "but what",
+                
+                # Clarification requests
+                "can you explain", "what does that mean", "how does that work",
+                "tell me more", "elaborate", "clarify", "expand on",
+                
+                # Implementation questions
+                "how do i implement", "how do i configure", "how do i set up",
+                "where do i find", "which tool", "what command",
+            ],
+            new_topic_phrases=[
+                # Compliance topics
+                "gdpr", "hipaa", "pci-dss", "compliance", "regulation", "audit",
+                "policy", "governance", "legal", "privacy law",
+                
+                # Prevention/architecture topics  
+                "secure my network", "security architecture", "best practices",
+                "vulnerability management", "patch management", "security controls",
+                "firewall", "encryption", "authentication",
+                
+                # Threat intelligence topics
+                "threat intelligence", "threat actor", "campaign analysis",
+                "malware analysis", "threat hunting", "indicators of compromise",
+                
+                # General "what is" questions about different domains
+                "what is nist", "what is iso", "what is zero trust",
+                "tell me about", "explain", "what are the", "define"
+            ]
+        )
+
+
+from workflow.system_prompts import PromptFormatter, SystemMessages, RouterPrompts
+
+
 class QueryRouter:
-    """
-    Routes queries to appropriate cybersecurity agents using a semantic, LLM-based approach.
-    """
+    """Routes queries to appropriate cybersecurity agents using a semantic, LLM-based approach."""
     
     def __init__(self, llm_client: ChatOpenAI, toolkit: CybersecurityToolkit):
         """Initialize the router with LangChain structured output capabilities and cybersecurity tools."""
         self.base_llm = llm_client
         self.toolkit = toolkit
         
-        # Create structured LLMs with retry logic
         self.classification_llm = llm_client.with_structured_output(CybersecurityClassification)
         self.routing_llm = llm_client.with_structured_output(RoutingDecision)
         
-        # LLM with cybersecurity tools for direct responses
         self.direct_llm = llm_client.bind_tools([
             self.toolkit.get_tool_by_name("web_search"),
             self.toolkit.get_tool_by_name("knowledge_search")
         ])
+        
+        self.followup_indicators = FollowUpIndicators.default()
         
         # This is no longer the primary source of truth, but a fallback/supplement.
         self.agent_expertise = {
@@ -63,67 +113,32 @@ class QueryRouter:
         if context_hint and context_hint != "general" and active_agent:
             logger.info(f"🔗 Checking if this is a follow-up to {active_agent} ({context_hint})")
             
-            # Check if this is actually a follow-up or a new cybersecurity topic
             if self._is_true_followup_query(query, context_hint, active_agent):
                 logger.info(f"🔗 CONTEXT PRIORITY: True follow-up detected - continuing with {active_agent}")
                 
                 return RoutingDecision(
-                    response_strategy="single_agent",
+                    response_strategy=ResponseStrategy.SINGLE_AGENT,
                     relevant_agents=[active_agent],
                     reasoning=f"Follow-up question to {active_agent.value.replace('_', ' ')} - continuing conversation",
                     estimated_complexity="simple"
                 )
             else:
-                logger.info(f"🔄 New cybersecurity topic detected - routing based on query content instead of previous agent")
+                logger.info("New cybersecurity topic detected - routing based on query content")
         
         # PRIORITY 2: Cybersecurity classification (for new topics or no context)
-        logger.info(f"🔍 No active follow-up context - starting cybersecurity classification for query: '{query}'")
-        is_cybersec = await self._is_cybersecurity_related(query)
-        logger.info(f"📋 Classification result: cybersecurity_related={is_cybersec}")
+        is_cybersec = await self._classify_cybersecurity_query(query)
         
         if not is_cybersec:
-            logger.info(f"✅ Routing '{query}' to general assistant (non-cybersecurity)")
+            logger.info(f"Routing '{query}' to general assistant")
             return RoutingDecision(
-                response_strategy="general_query",
+                response_strategy=ResponseStrategy.GENERAL_QUERY,
                 relevant_agents=[],
                 reasoning="Non-cybersecurity query - routing to general assistant mode",
                 estimated_complexity="simple"
             )
         
         # If cybersecurity-related, use normal triage
-        prompt = self._build_triage_prompt(query)
-        
-        try:
-            # Retry logic with LangChain structured output
-            for attempt in range(3):
-                try:
-                    decision = await self.routing_llm.ainvoke([
-                        SystemMessage(content="You are an intelligent SOC triage system. Provide structured routing decisions."),
-                        HumanMessage(content=prompt)
-                    ])
-                    break
-                except Exception as e:
-                    if attempt == 2:  # Last attempt
-                        raise e
-                    logger.warning(f"Routing attempt {attempt + 1} failed: {e}, retrying...")
-            
-            logger.info(f"Triage decision for query '{query[:50]}...': {decision.response_strategy} - {decision.reasoning}")
-            
-            # Filter out any roles that are not actual agents
-            valid_agents = [role for role in decision.relevant_agents if role in self.agent_expertise]
-            decision.relevant_agents = valid_agents
-            
-            return decision
-        
-        except Exception as e:
-            logger.error(f"LangChain structured triage failed after retries: {e}")
-            # Graceful fallback to single agent strategy
-            return RoutingDecision(
-                response_strategy="single_agent",
-                relevant_agents=[AgentRole.INCIDENT_RESPONSE],
-                reasoning=f"Fallback due to routing error: {str(e)[:100]}",
-                estimated_complexity="moderate"
-            )
+        return await self._perform_cybersecurity_triage(query)
 
     async def determine_relevant_agents(self, query: str) -> List[AgentRole]:
         """
@@ -132,13 +147,12 @@ class QueryRouter:
         decision = await self.determine_routing_strategy(query)
         return decision.relevant_agents
 
-    def _build_triage_prompt(self, query: str) -> str:
-        """Constructs the intelligent triage prompt for response strategy determination."""
-        
-        # Dynamically build the agent specializations and supporting tools
+    def _build_agent_capabilities_description(self) -> str:
+        """Build the agent capabilities section for prompts"""
         agent_capabilities = []
         for role, tool_names in AGENT_TOOL_PERMISSIONS.items():
-            if role == AgentRole.COORDINATOR: continue # Skip coordinator
+            if role == AgentRole.COORDINATOR: 
+                continue  # Skip coordinator
             
             # Start with the high-level expertise description - this is the primary focus
             expertise = self.agent_expertise.get(role, f"Specialist in {role.value.replace('_', ' ')}.")
@@ -158,141 +172,33 @@ class QueryRouter:
             
             agent_capabilities.append(capability_str)
             
-        expertise_descriptions = "\n".join(agent_capabilities)
-        
-        return f"""
-You are an intelligent SOC triage system. Your job is to determine the optimal response strategy for cybersecurity queries by routing them to the agent whose PRIMARY ROLE AND EXPERTISE best matches the user's needs.
+        return "\n".join(agent_capabilities)
 
-**Core Routing Philosophy:**
-🎯 **ROLE EXPERTISE FIRST** - Match the query to which agent's primary responsibility this falls under
-🔧 **TOOLS SECOND** - Verify the chosen agent has necessary tools, but don't let tool quantity drive decisions
-⚖️ **BALANCED ROUTING** - Avoid always choosing the agent with the most tools
-
-**Available Response Strategies:**
-
-1. **DIRECT** (Target: 60-70% of queries)
-   - Simple factual questions ("What is NIST?", "How to report phishing?")
-   - Basic definitions and explanations that don't require specialized analysis
-   - → Router handles directly. Select this if no specialist expertise is needed.
-
-2. **SINGLE_AGENT** (Target: 25-30% of queries)  
-   - Query clearly falls under one agent's area of responsibility
-   - Requires specialized knowledge or analysis from a domain expert
-   - → Route to the agent whose primary role best matches the query intent
-
-3. **MULTI_AGENT** (Target: 5-10% of queries)
-   - Complex scenarios requiring multiple specialist perspectives
-   - Incidents spanning multiple domains (e.g., breach requiring both incident response AND compliance review)
-   - → Select all agents whose primary expertise is essential to address the query
-
-**Agent Specializations & Supporting Tools:**
-{expertise_descriptions}
-
-**User Query:**
-"{query}"
-
----
-**Decision Framework:**
-1. **Analyze the user's query to understand the PRIMARY INTENT and CONTEXT**
-   - What is the user really trying to accomplish?
-   - What type of expertise do they need?
-   - Is this reactive (incident) or proactive (prevention)?
-
-2. **Match query intent to agent PRIMARY RESPONSIBILITY**
-   - Which agent's core role/expertise best aligns with this need?
-   - Ignore tool counts - focus on which agent should "own" this type of request
-
-3. **Verify the chosen agent has appropriate supporting tools**
-   - Can the selected agent actually execute what's needed?
-   - If not, consider if a different agent or multi-agent approach is needed
-
-4. **Select response strategy and provide reasoning**
-   - Explain why this agent's expertise matches the query
-   - Mention supporting tools as validation, not primary justification
-
-**Example Reasoning Patterns:**
-
-✅ **Good**: "Route to INCIDENT_RESPONSE because **breach investigation and exposure checking is their primary responsibility**. They have the exposure_checker tool to execute this request."
-
-❌ **Bad**: "Route to INCIDENT_RESPONSE because they have the most tools available (5 tools vs 3 for others)."
-
-✅ **Good**: "Route to PREVENTION because **proactive security architecture and vulnerability management is their core expertise**. This aligns with the user's need for preventive controls."
-
-❌ **Bad**: "Route to PREVENTION because they have vulnerability_search and threat_feeds tools."
-
-**Complexity Guidelines:**
-- **Simple**: Basic questions, definitions, general guidance
-- **Moderate**: Specific analysis, single-domain problems, standard procedures  
-- **Complex**: Multi-faceted incidents, cross-domain issues, strategic decisions
-
-Focus on matching USER INTENT to AGENT EXPERTISE, not user keywords to agent tools.
-"""
+    def _build_triage_prompt(self, query: str) -> str:
+        """Constructs the intelligent triage prompt using centralized prompts"""
+        agent_capabilities = self._build_agent_capabilities_description()
+        return PromptFormatter.format_triage_prompt(query, agent_capabilities)
 
     def _is_true_followup_query(self, query: str, context_hint: str, active_agent: AgentRole) -> bool:
         """
-        Determine if this is a true follow-up to the previous conversation 
-        or a new cybersecurity topic that should be routed based on content.
-        
-        Args:
-            query: Current user query
-            context_hint: Previous conversation context
-            active_agent: Currently active agent
-            
-        Returns:
-            True if this is a follow-up, False if it's a new topic
+        Determine if this is a true follow-up to the previous conversation.
+        Now uses structured data for easier testing and maintenance.
         """
         query_lower = query.lower()
         
-        # Strong follow-up indicators - these should stay with the same agent
-        strong_followup_phrases = [
-            # Direct references to previous conversation
-            "how do i", "how can i", "what's the next step", "next step",
-            "how to", "walk me through", "guide me through", "show me how",
-            "what should i do", "how should i", "can you help me",
-            
-            # Continuation words
-            "also", "additionally", "furthermore", "and then", "after that",
-            "what about", "what if", "but how", "but what",
-            
-            # Clarification requests
-            "can you explain", "what does that mean", "how does that work",
-            "tell me more", "elaborate", "clarify", "expand on",
-            
-            # Implementation questions
-            "how do i implement", "how do i configure", "how do i set up",
-            "where do i find", "which tool", "what command",
-        ]
+        # Use the structured indicators
+        has_followup_phrase = any(
+            phrase in query_lower 
+            for phrase in self.followup_indicators.strong_followup_phrases
+        )
+        has_new_topic_phrase = any(
+            phrase in query_lower 
+            for phrase in self.followup_indicators.new_topic_phrases
+        )
         
-        # New topic indicators - these should be routed to appropriate specialists
-        new_topic_phrases = [
-            # Compliance topics
-            "gdpr", "hipaa", "pci-dss", "compliance", "regulation", "audit",
-            "policy", "governance", "legal", "privacy law",
-            
-            # Prevention/architecture topics  
-            "secure my network", "security architecture", "best practices",
-            "vulnerability management", "patch management", "security controls",
-            "firewall", "encryption", "authentication",
-            
-            # Threat intelligence topics
-            "threat intelligence", "threat actor", "campaign analysis",
-            "malware analysis", "threat hunting", "indicators of compromise",
-            
-            # General "what is" questions about different domains
-            "what is nist", "what is iso", "what is zero trust",
-            "tell me about", "explain", "what are the", "define"
-        ]
-        
-        # Check for strong follow-up indicators
-        has_followup_phrase = any(phrase in query_lower for phrase in strong_followup_phrases)
-        
-        # Check for new topic indicators
-        has_new_topic_phrase = any(phrase in query_lower for phrase in new_topic_phrases)
-        
-        # Short queries are more likely to be follow-ups
+        # Apply the decision logic
         is_short_query = len(query.split()) <= 10
         
-        # Determine result
         if has_followup_phrase and not has_new_topic_phrase:
             return True  # Clear follow-up
         elif has_new_topic_phrase:
@@ -304,47 +210,43 @@ Focus on matching USER INTENT to AGENT EXPERTISE, not user keywords to agent too
         else:
             return False  # Default to new topic for longer, unclear queries
 
-    async def _is_cybersecurity_related(self, query: str) -> bool:
+    async def _classify_cybersecurity_query(self, query: str) -> bool:
         """
-        Quick classification to determine if query is cybersecurity-related.
-        Fast check before full triage.
+        Extracted and simplified cybersecurity classification logic.
+        Now more focused and easier to test.
         """
         classification_prompt = f"""
-Classify this query as cybersecurity-related or not and provide your reasoning.
-
-CYBERSECURITY-RELATED includes:
-- Security incidents, threats, vulnerabilities
-- Malware, phishing, attacks, breaches  
-- Compliance, policies, risk management
-- Security tools, frameworks (NIST, ISO 27001, etc.)
-- Network security, access control, encryption
-- Security monitoring, SOC operations
-- Incident response, forensics
-
-NOT CYBERSECURITY-RELATED includes:
-- General questions (time, weather, directions)
-- Basic definitions unrelated to security
-- Personal assistance requests
-- General technology questions
-- Business questions unrelated to security
+Analyze the following query and determine if it is cybersecurity-related.
 
 Query: "{query}"
 
-Provide a classification with confidence score and reasoning.
+Consider these as cybersecurity-related:
+- Security threats, vulnerabilities, attacks
+- Data protection, privacy, encryption
+- Compliance, regulations (GDPR, HIPAA, etc.)
+- Incident response, forensics
+- Security tools, firewalls, monitoring
+- Risk assessment, security architecture
+- Authentication, authorization, access control
+
+Provide:
+1. is_cybersecurity_related: boolean
+2. confidence: float (0.0 to 1.0)
+3. reasoning: brief explanation (max 200 chars)
 """
         
         try:
-            logger.info(f"🚀 Starting LLM classification for query: '{query}'")
+
             
             # Retry logic with LangChain structured output
             for attempt in range(2):
                 try:
-                    logger.info(f"🔄 Classification attempt {attempt + 1} for query: '{query}'")
+
                     classification = await self.classification_llm.ainvoke([
                         SystemMessage(content="You are a cybersecurity query classifier. Provide structured classification results."),
                         HumanMessage(content=classification_prompt)
                     ])
-                    logger.info(f"✅ Classification successful on attempt {attempt + 1}")
+                    logger.info(f"Classification successful on attempt {attempt + 1}")
                     break
                 except ValidationError as ve:
                     logger.error(f"Classification ValidationError on attempt {attempt + 1}: {ve}")
@@ -356,27 +258,78 @@ Provide a classification with confidence score and reasoning.
                         raise e
                     logger.warning("Retrying classification...")
             
-            logger.info(f"✅ Classification result for '{query}': cybersecurity={classification.is_cybersecurity_related} "
+            logger.info(f"Classification result for '{query}': cybersecurity={classification.is_cybersecurity_related} "
                        f"(confidence: {classification.confidence:.2f}) - {classification.reasoning}")
             
             return classification.is_cybersecurity_related
             
         except Exception as e:
-            logger.error(f"LangChain classification completely failed after retries: {e}")
+            logger.error(f"LLM classification completely failed after retries: {e}")
             logger.error(f"Query that failed classification: '{query}'")
             logger.error("This should not happen for simple queries like greetings!")
             
-            # Conservative fallback - default to non-cybersecurity for very short queries
-            if len(query.strip()) <= 10:
-                logger.warning(f"Very short query '{query}' - assuming non-cybersecurity as fallback")
-                return False
-            else:
-                logger.warning(f"Complex query '{query}' - defaulting to cybersecurity as fallback")
-                return True
+            # Use improved fallback logic
+            return self._fallback_classification(query)
 
-    def _build_routing_prompt(self, query: str) -> str:
-        """Legacy method - use _build_triage_prompt instead."""
-        return self._build_triage_prompt(query)
+    def _fallback_classification(self, query: str) -> bool:
+        """Improved fallback classification logic"""
+        # Conservative fallback - default to non-cybersecurity for very short queries
+        if len(query.strip()) <= 10:
+            logger.warning(f"Very short query '{query}' - assuming non-cybersecurity as fallback")
+            return False
+        
+        # Simple keyword-based fallback for longer queries
+        cybersec_keywords = {
+            "security", "breach", "malware", "vulnerability", "incident", "threat",
+            "phishing", "ransomware", "firewall", "encryption", "compliance",
+            "gdpr", "hipaa", "nist", "iso", "attack", "hack", "exploit"
+        }
+        query_words = set(query.lower().split())
+        
+        has_cybersec_keywords = bool(cybersec_keywords & query_words)
+        
+        if has_cybersec_keywords:
+            logger.warning(f"Fallback: Found cybersecurity keywords in '{query}' - assuming cybersecurity")
+            return True
+        else:
+            logger.warning(f"Fallback: No cybersecurity keywords in '{query}' - assuming general")
+            return False
+
+    async def _perform_cybersecurity_triage(self, query: str) -> RoutingDecision:
+        """Separated cybersecurity triage logic for better organization"""
+        prompt = self._build_triage_prompt(query)
+        
+        try:
+            # Retry logic with LangChain structured output
+            for attempt in range(3):
+                try:
+                    decision = await self.routing_llm.ainvoke([
+                        SystemMessage(content=SystemMessages.SOC_TRIAGE_SYSTEM),
+                        HumanMessage(content=prompt)
+                    ])
+                    break
+                except Exception as e:
+                    if attempt == 2:  # Last attempt
+                        raise e
+                    logger.warning(f"Routing attempt {attempt + 1} failed: {e}, retrying...")
+            
+            logger.info(f"Triage decision for query '{query[:50]}...': {decision.response_strategy} - {decision.reasoning}")
+            
+            # Filter out any roles that are not actual agents
+            valid_agents = [role for role in decision.relevant_agents if role in self.agent_expertise]
+            decision.relevant_agents = valid_agents
+            
+            return decision
+        
+        except Exception as e:
+            logger.error(f"Cybersecurity triage failed: {e}")
+            # Graceful fallback to single agent strategy
+            return RoutingDecision(
+                response_strategy=ResponseStrategy.SINGLE_AGENT,
+                relevant_agents=[AgentRole.INCIDENT_RESPONSE],
+                reasoning=f"Fallback due to routing error: {str(e)[:100]}",
+                estimated_complexity="moderate"
+            )
 
     def get_primary_agent(self, agents: List[AgentRole]) -> AgentRole:
         """
@@ -405,35 +358,7 @@ Provide a classification with confidence score and reasoning.
         """
         logger.info(f"🎯 Router handling direct cybersecurity query: {query[:50]}...")
         
-        system_prompt = """
-You are a cybersecurity SOC analyst providing direct responses to common cybersecurity queries. 
-You have access to tools for searching web resources and knowledge bases when needed.
-
-**Your Role:**
-- Answer simple cybersecurity questions directly using your knowledge
-- Use search_knowledge_base for organizational policies and procedures
-- Use web_search_tool for current threat intelligence and best practices  
-- Provide clear, accurate, actionable guidance
-- Be concise but comprehensive
-
-**Available Tools:**
-🌐 **web_search_tool** - Search current cybersecurity information
-📚 **search_knowledge_base** - Search internal knowledge base
-
-**Response Guidelines:**
-- For basic definitions: Answer directly with your knowledge
-- For current threats/news: Use web search
-- For policies/procedures: Use knowledge base search  
-- Always include practical next steps when relevant
-- Be professional but accessible
-
-**Example Usage:**
-- "What is NIST?" → Direct answer with framework overview
-- "Latest ransomware threats" → Web search for current intel
-- "Incident response process" → Knowledge base search
-
-Focus on being helpful and accurate. If the question requires specialized analysis, indicate that specialist consultation would be beneficial.
-"""
+        system_prompt = RouterPrompts.DIRECT_RESPONSE
         
         try:
             # Use LLM with tools for direct response
@@ -451,24 +376,30 @@ Focus on being helpful and accurate. If the question requires specialized analys
                 logger.info(f"Router making {len(response.tool_calls)} tool calls for direct response")
                 
                 for tool_call in response.tool_calls:
+                    # Execute tool via toolkit
+                    tool_name = tool_call["name"]
+                    tool_args = tool_call["args"]
+                    tool_id = tool_call["id"]
+
                     try:
-                        # Execute tool via MCP client
-                        tool_name = tool_call["name"]
-                        
-                        # Tools are now executed directly by LangChain - much simpler!
-                        result = f"Tool {tool_name} executed successfully"
-                        
-                        # Add tool result to messages
+                        # Get the actual tool instance from toolkit
+                        tool = self.toolkit.get_tool_by_name(tool_name)
+                        if tool:
+                            # Execute the tool with real arguments
+                            real_result = await tool.ainvoke(tool_args)
+                            result = str(real_result)
+                        else:
+                            result = f"Tool {tool_name} not found in toolkit"
+                            
                         messages.append(ToolMessage(
-                            content=str(result), 
-                            tool_call_id=tool_call["id"]
+                            content=result,
+                            tool_call_id=tool_id
                         ))
-                        
                     except Exception as tool_error:
                         logger.error(f"Tool execution failed for {tool_name}: {tool_error}")
                         messages.append(ToolMessage(
-                            content=f"Tool {tool_name} failed: {str(tool_error)}", 
-                            tool_call_id=tool_call["id"]
+                            content=f"Tool {tool_name} failed: {str(tool_error)}",
+                            tool_call_id=tool_id
                         ))
                 
                 # Get final response after tool execution

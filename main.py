@@ -11,12 +11,13 @@ from dotenv import load_dotenv
 
 from config.settings import settings
 from conversation.manager import ConversationManager
+from conversation.config import ConversationConfig
 from utils.logging import setup_logging
 from workflow.graph import CybersecurityTeamGraph
 from workflow.schemas import ChatResponse
 
 # --- Setup ---
-load_dotenv() # Load environment variables from .env file
+load_dotenv() 
 setup_logging()
 logger = logging.getLogger(__name__)
 
@@ -32,16 +33,21 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Initializing Cybersecurity Advisory System for API...")
     workflow = CybersecurityTeamGraph()
     llm_client = ChatOpenAI(model=settings.default_model, temperature=0.1, max_tokens=4000)
-    app.state.conversation_manager = ConversationManager(workflow=workflow, llm_client=llm_client)
+    
+    config = ConversationConfig.from_env()
+    
+    app.state.conversation_manager = ConversationManager(
+        workflow=workflow, 
+        llm_client=llm_client,
+        config=config
+    )
     await app.state.conversation_manager.initialize()
-    logger.info("✅ System initialized successfully for API.")
+    logger.info("System initialized successfully for API")
     yield
-    # --- Shutdown logic would go here ---
-    logger.info("🛑 Shutting down application.")
+    logger.info("Shutting down application")
 
 app = FastAPI(lifespan=lifespan)
 
-# --- API Endpoints ---
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(request: Request):
     try:
@@ -62,11 +68,9 @@ async def chat_endpoint(request: Request):
             "tools_used": []
         }
 
-        # Extract agent details and tool usage based on response type
         team_responses = final_state.get("team_responses", [])
         
         if len(team_responses) > 1:
-            # Multi-agent team response - show "Advisory Team"
             response_data["agent_name"] = "Advisory Team"
             response_data["agent_role"] = "team"
             all_tools = []
@@ -76,7 +80,6 @@ async def chat_endpoint(request: Request):
             response_data["tools_used"] = sorted(list(set(all_tools)))
             
         elif len(team_responses) == 1:
-            # Single agent response - show individual agent name
             first_responder = team_responses[0]
             response_data["agent_name"] = first_responder.agent_name
             response_data["agent_role"] = first_responder.agent_role.value
@@ -84,15 +87,12 @@ async def chat_endpoint(request: Request):
                 response_data["tools_used"] = [tool.tool_name for tool in first_responder.tools_used]
                 
         elif final_state.get("response_strategy") == "general_query":
-            # General assistant response
             response_data["agent_name"] = "General Assistant"
             response_data["agent_role"] = "general"
-            # Check if web search was used (common for general queries)
             if "web_search" in str(final_state.get("final_answer", "")).lower():
                 response_data["tools_used"] = ["web_search"]
                 
         else:
-            # Fallback for any other response type
             response_data["agent_name"] = "Cybersecurity Assistant"
             response_data["agent_role"] = "assistant"
 
@@ -125,7 +125,6 @@ async def serve_frontend(request: Request, full_path: str):
     if file_path.exists():
         return FileResponse(file_path)
     
-    # Fallback to index.html for SPA routing
     index_path = frontend_dir / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
