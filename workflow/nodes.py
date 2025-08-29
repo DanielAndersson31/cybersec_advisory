@@ -155,16 +155,16 @@ Respond with structured analysis of web search necessity.
     @observe(name="analyze_query")
     async def analyze_query(self, state: WorkflowState) -> WorkflowState:
         """
-        Analyze and classify the user query to determine context and routing strategy.
-        Now includes context-aware routing for persistent conversations.
+        Analyze and classify the user query - now simplified to focus on web search intent.
+        Context-aware routing happens AFTER context continuity check.
         """
-        logger.info(f"Analyzing and classifying query: {state['query'][:100]}...")
+        logger.info(f"Analyzing query for web search intent: {state['query'][:100]}...")
         
         # Set metadata
         state["started_at"] = datetime.now(timezone.utc)
         state["messages"].append(HumanMessage(content=state["query"]))
         
-        # DETECT WEB SEARCH INTENT
+        # DETECT WEB SEARCH INTENT (this is still useful for agents)
         web_search_intent = await self._detect_web_search_intent(state["query"])
         state["web_search_intent"] = web_search_intent
         
@@ -172,7 +172,109 @@ Respond with structured analysis of web search necessity.
             logger.info(f"WEB SEARCH INTENT DETECTED: {web_search_intent['intent_type']} "
                        f"(confidence: {web_search_intent['confidence']:.2f}) - {web_search_intent['reasoning']}")
         
-        # Check for context continuity first
+        logger.info(f"Analysis complete - web search intent recorded")
+        
+        return state
+
+    @observe(name="check_context_continuity")
+    async def check_context_continuity(self, state: WorkflowState) -> WorkflowState:
+        """
+        Check if the current query maintains cybersecurity conversation context
+        AND perform context-aware routing.
+        """
+        logger.info(f"Checking context continuity for query: {state['query'][:100]}...")
+        
+        # DEBUG: Log all state information
+        logger.info(f"DEBUG: Active agent in state: {state.get('active_agent')}")
+        logger.info(f"DEBUG: Conversation context in state: {state.get('conversation_context')}")
+        logger.info(f"DEBUG: Thread ID: {state.get('thread_id')}")
+        
+        conversation_history = state.get("conversation_history", [])
+        logger.info(f"DEBUG: Conversation history length: {len(conversation_history)}")
+        
+        # If no conversation history, check if we have active_agent from previous state
+        if not conversation_history:
+            active_agent = state.get("active_agent")
+            conversation_context = state.get("conversation_context")
+            
+            if active_agent and conversation_context == "cybersecurity":
+                # We have an active cybersecurity agent from previous state
+                logger.info(f"No conversation history, but found active agent: {active_agent}")
+                state["context_continuity"] = {
+                    "is_follow_up": True,
+                    "context_maintained": True,
+                    "previous_context": f"Previous conversation with {active_agent.value}",
+                    "specialist_context": active_agent.value.lower(),
+                    "confidence": 0.9,
+                    "reasoning": f"Active agent {active_agent.value} found in persisted state"
+                }
+            else:
+                logger.info("First query in conversation - no context to maintain")
+                state["context_continuity"] = {
+                    "is_follow_up": False,
+                    "context_maintained": True,
+                    "previous_context": None,
+                    "specialist_context": "general",
+                    "confidence": 1.0,
+                    "reasoning": "First query in conversation"
+                }
+        else:
+            recent_messages = conversation_history[-3:]
+            logger.info(f"DEBUG: Recent messages: {[msg.get('role') for msg in recent_messages]}")
+            
+            context_prompt = f"""
+        Analyze whether the current query maintains cybersecurity conversation context and specialist expertise.
+
+        **Recent Conversation History:**
+        {chr(10).join([f"- {msg.get('role', 'user')}: {msg.get('content', '')[:200]}..." for msg in recent_messages])}
+
+        **Current Query:**
+        {state['query']}
+
+        **Assessment Criteria:**
+        1. Is this a follow-up to a previous cybersecurity conversation?
+        2. Does it maintain the specialized context (incident response, threat analysis, compliance, etc.)?
+        3. Would a cybersecurity specialist need to provide expertise for this query?
+        4. Does the query build on previous security analysis or recommendations?
+        """
+            
+            try:
+                context_result = await self.context_continuity_llm.ainvoke([
+                    SystemMessage(content="You are an expert at analyzing cybersecurity conversation context and specialist expertise continuity."),
+                    HumanMessage(content=context_prompt)
+                ])
+                
+                state["context_continuity"] = context_result.model_dump()
+                
+                logger.info(f"Context continuity check successful: Follow-up={context_result.is_follow_up}, "
+                        f"Context maintained={context_result.context_maintained}, "
+                        f"Specialist context={context_result.specialist_context}, "
+                        f"Confidence={context_result.confidence:.2f}")
+                
+            except Exception as e:
+                logger.error(f"Context continuity check failed after all retries: {e}")
+                # Enhanced fallback - use persisted state if available
+                active_agent = state.get("active_agent")
+                if active_agent:
+                    state["context_continuity"] = {
+                        "is_follow_up": True,
+                        "context_maintained": True,
+                        "previous_context": f"Previous conversation with {active_agent.value}",
+                        "specialist_context": active_agent.value.lower(),
+                        "confidence": 0.7,
+                        "reasoning": f"Fallback: Using persisted active agent {active_agent.value}"
+                    }
+                else:
+                    state["context_continuity"] = {
+                        "is_follow_up": True,
+                        "context_maintained": True,
+                        "previous_context": "Previous cybersecurity conversation",
+                        "specialist_context": "general",
+                        "confidence": 0.5,
+                        "reasoning": "Default assumption due to analysis failure"
+                    }
+        
+        # NOW DO CONTEXT-AWARE ROUTING using the context we just determined
         context_continuity = state.get("context_continuity", {})
         
         # Prepare context hints for router
@@ -181,10 +283,10 @@ Respond with structured analysis of web search necessity.
         
         # If we have cybersecurity context, provide hints to router
         if (context_continuity.get("context_maintained") and 
-            context_continuity.get("specialist_context") not in ["general", None]):
+            context_continuity.get("specialist_context") in ["incident_response", "prevention", "threat_intel", "compliance"]):
             context_hint = context_continuity.get("specialist_context")
-            logger.info(f"🔧 ROUTER CALL: context_hint={context_hint}, active_agent={active_agent}")
-        
+            logger.info(f"ROUTER CALL: context_hint={context_hint}, active_agent={active_agent}")
+
         # Perform intelligent classification and routing decision with context awareness
         routing_decision = await self.router.determine_routing_strategy(
             state["query"],
@@ -204,103 +306,8 @@ Respond with structured analysis of web search necessity.
         # Determine if consensus needed
         state["needs_consensus"] = len(routing_decision.relevant_agents) > 1
         
-        logger.info(f"Analysis complete for '{state['query'][:50]}...': {routing_decision.response_strategy} "
+        logger.info(f"Routing complete for '{state['query'][:50]}...': {routing_decision.response_strategy} "
                    f"(complexity: {routing_decision.estimated_complexity}) - {routing_decision.reasoning}")
-        
-        return state
-
-    @observe(name="check_context_continuity")
-    async def check_context_continuity(self, state: WorkflowState) -> WorkflowState:
-        """
-        Check if the current query maintains cybersecurity conversation context.
-        Enhanced with debugging information.
-        """
-        logger.info(f"Checking context continuity for query: {state['query'][:100]}...")
-        
-        # DEBUG: Log all state information
-        logger.info(f"DEBUG: Active agent in state: {state.get('active_agent')}")
-        logger.info(f"DEBUG: Conversation context in state: {state.get('conversation_context')}")
-        logger.info(f"DEBUG: Thread ID: {state.get('thread_id')}")
-        
-        conversation_history = state.get("conversation_history", [])
-        logger.info(f"DEBUG: Conversation history length: {len(conversation_history)}")
-        
-        # If no conversation history, check if we have active_agent from previous state
-        if not conversation_history and not state.get("active_agent"):
-            logger.info("First query in conversation - no context to maintain")
-            state["context_continuity"] = {
-                "is_follow_up": False,
-                "context_maintained": False,
-                "previous_context": None,
-                "specialist_context": "general",
-                "confidence": 1.0,
-                "reasoning": "First query in conversation"
-            }
-            return state
-        
-        recent_messages = conversation_history[-3:] if conversation_history else []
-        active_agent_str = f"The active specialist is the {state.get('active_agent').value} agent." if state.get("active_agent") else "There is no specific active specialist."
-
-        logger.info(f"DEBUG: Recent messages: {[msg.get('role') for msg in recent_messages]}")
-        
-        context_prompt = f"""
-    Analyze if the "Current Query" is a direct follow-up to the "Recent Conversation History".
-    The conversation is currently with a cybersecurity specialist. Assume the context is maintained unless the user explicitly changes the topic to something completely unrelated to the ongoing cybersecurity discussion.
-
-    **Recent Conversation History:**
-    {chr(10).join([f"- {msg.get('role', 'user')}: {msg.get('content', '')[:200]}..." for msg in recent_messages])}
-    
-    **Active Agent Context:**
-    {active_agent_str}
-
-    **Current Query:**
-    {state['query']}
-
-    **Assessment:**
-    1.  Is the query a question, statement, or command that logically follows from the last message?
-    2.  Does the query ask for clarification, more detail, or the next step related to the previous topic?
-    3.  Even if the query has no cybersecurity keywords, could it still be related to the ongoing cybersecurity context? (e.g., "why did that happen?", "tell me more", "what should I do now?")
-
-    **Decision:**
-    - If it is a follow-up, set `context_maintained` to `true` and `specialist_context` to the active agent's role.
-    - If it is a clear and unrelated topic change (e.g., asking about the weather), set `context_maintained` to `false` and `specialist_context` to `general`.
-    """
-        
-        try:
-            context_result = await self.context_continuity_llm.ainvoke([
-                SystemMessage(content="You are an expert at analyzing cybersecurity conversation context and specialist expertise continuity."),
-                HumanMessage(content=context_prompt)
-            ])
-            
-            state["context_continuity"] = context_result.model_dump()
-            
-            logger.info(f"Context continuity check successful: Follow-up={context_result.is_follow_up}, "
-                    f"Context maintained={context_result.context_maintained}, "
-                    f"Specialist context={context_result.specialist_context}, "
-                    f"Confidence={context_result.confidence:.2f}")
-            
-        except Exception as e:
-            logger.error(f"Context continuity check failed after all retries: {e}")
-            # Enhanced fallback - use persisted state if available
-            active_agent = state.get("active_agent")
-            if active_agent:
-                state["context_continuity"] = {
-                    "is_follow_up": True,
-                    "context_maintained": True,
-                    "previous_context": f"Previous conversation with {active_agent.value}",
-                    "specialist_context": active_agent.value.lower(),
-                    "confidence": 0.7,
-                    "reasoning": f"Fallback: Using persisted active agent {active_agent.value}"
-                }
-            else:
-                state["context_continuity"] = {
-                    "is_follow_up": True,
-                    "context_maintained": True,
-                    "previous_context": "Previous cybersecurity conversation",
-                    "specialist_context": "general",
-                    "confidence": 0.5,
-                    "reasoning": "Default assumption due to analysis failure"
-                }
         
         return state
     

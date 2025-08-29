@@ -95,25 +95,36 @@ class ConversationManager:
         history.add_user_message(message, entities=entities)
         
         try:
-            # Load previous state to maintain context
+            # Load previous state to maintain context - this populates the LangGraph state
             config = {"configurable": {"thread_id": thread_id}}
             previous_state_snapshot = await self.workflow.get_state(thread_id)
-            previous_state = previous_state_snapshot.values if previous_state_snapshot else {}
             
-            # Prepare initial state, preserving key context from previous turn
+            # Handle StateSnapshot object properly - the values attribute should be the state dict
+            previous_state = {}
+            if previous_state_snapshot:
+                try:
+                    # StateSnapshot.values should be the actual state dictionary
+                    state_values = previous_state_snapshot.values
+                    
+                    # If it's a dictionary, use it directly
+                    if isinstance(state_values, dict):
+                        previous_state = state_values
+                    # If it's dict_values, convert back to dict
+                    elif hasattr(state_values, '__iter__'):
+                        # This might be a dict_values object, skip for now
+                        logger.warning(f"StateSnapshot.values is not a dict, type: {type(state_values)}")
+                        previous_state = {}
+                    else:
+                        previous_state = {}
+                except Exception as e:
+                    logger.error(f"Error accessing previous state: {e}")
+                    previous_state = {}
+            
+            logger.info(f"Thread {thread_id}: Previous state available: {bool(previous_state)}")
             if previous_state:
-                # If state exists, carry over the active agent and context
-                initial_state = {
-                    "query": message,
-                    "active_agent": previous_state.get("active_agent"),
-                    "conversation_context": previous_state.get("conversation_context"),
-                }
-                logger.info(f"Loaded previous state for thread {thread_id}: active_agent={initial_state.get('active_agent')}, context={initial_state.get('conversation_context')}")
-            else:
-                # No previous state, start fresh
-                initial_state = {"query": message}
-                logger.info(f"No previous state found for thread {thread_id}, starting fresh.")
-
+                logger.info(f"Thread {thread_id}: State contains active_agent: {previous_state.get('active_agent')}")
+                logger.info(f"Thread {thread_id}: State contains conversation_context: {previous_state.get('conversation_context')}")
+            
             # Convert conversation history to the format expected by the workflow
             conversation_history = []
             for msg in history.messages:
@@ -124,9 +135,17 @@ class ConversationManager:
                     "agent_used": msg.agent_used
                 })
             
-            # Get workflow response
+            # If we have previous state, update the workflow state to maintain context
+            if previous_state:
+                logger.info(f"Updating workflow state with: active_agent={previous_state.get('active_agent')}, conversation_context={previous_state.get('conversation_context')}")
+                await self.workflow.update_state(thread_id, {
+                    "active_agent": previous_state.get("active_agent"),
+                    "conversation_context": previous_state.get("conversation_context"),
+                })
+            
+            # Get workflow response - pass the query string directly
             response = await self.workflow.get_team_response(
-                initial_state=initial_state,
+                query=message,  # Pass the message as query parameter
                 thread_id=thread_id,
                 conversation_history=conversation_history
             )

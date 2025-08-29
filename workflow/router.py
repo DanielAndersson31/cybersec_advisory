@@ -59,41 +59,53 @@ class QueryRouter:
         Returns:
             RoutingDecision with strategy and relevant agents
         """
-        logger.info(f"🔧 ROUTER RECEIVED: query='{query[:50]}...', context_hint={context_hint}, active_agent={active_agent}")
-
-        # ---> REFACTORED LOGIC <---
-        # PRIORITY 1: If context is maintained with a specialist, KEEP IT.
+        # PRIORITY 1: Context-aware routing - Only for TRUE follow-ups to the same topic
         if context_hint and context_hint != "general" and active_agent:
-            logger.info(f"🔗 CONTEXT PRIORITY: Active '{context_hint}' context detected. Maintaining conversation with {active_agent.value}.")
-            return RoutingDecision(
-                response_strategy="single_agent",
-                relevant_agents=[active_agent],
-                reasoning=f"Follow-up question in an active '{context_hint}' context. Continuing with the specialist.",
-                estimated_complexity="simple"
-            )
+            logger.info(f"🔗 Checking if this is a follow-up to {active_agent} ({context_hint})")
+            
+            # Check if this is actually a follow-up or a new cybersecurity topic
+            if self._is_true_followup_query(query, context_hint, active_agent):
+                logger.info(f"🔗 CONTEXT PRIORITY: True follow-up detected - continuing with {active_agent}")
+                
+                return RoutingDecision(
+                    response_strategy="single_agent",
+                    relevant_agents=[active_agent],
+                    reasoning=f"Follow-up question to {active_agent.value.replace('_', ' ')} - continuing conversation",
+                    estimated_complexity="simple"
+                )
+            else:
+                logger.info(f"🔄 New cybersecurity topic detected - routing based on query content instead of previous agent")
         
-        # PRIORITY 2: If no context, classify the new query.
-        logger.info(f"🔍 No active context. Starting fresh classification for query: '{query[:50]}...'")
+        # PRIORITY 2: Cybersecurity classification (for new topics or no context)
+        logger.info(f"🔍 No active follow-up context - starting cybersecurity classification for query: '{query}'")
         is_cybersec = await self._is_cybersecurity_related(query)
+        logger.info(f"📋 Classification result: cybersecurity_related={is_cybersec}")
         
         if not is_cybersec:
-            logger.info(f"✅ General Query: Routing '{query[:50]}...' to general assistant.")
+            logger.info(f"✅ Routing '{query}' to general assistant (non-cybersecurity)")
             return RoutingDecision(
                 response_strategy="general_query",
                 relevant_agents=[],
-                reasoning="Non-cybersecurity query detected.",
+                reasoning="Non-cybersecurity query - routing to general assistant mode",
                 estimated_complexity="simple"
             )
         
-        # PRIORITY 3: If it's a new cybersecurity query, perform full triage.
-        logger.info(f"🛡️ New Cybersecurity Query: Performing full triage for '{query[:50]}...'")
+        # If cybersecurity-related, use normal triage
         prompt = self._build_triage_prompt(query)
         
         try:
-            decision = await self.routing_llm.ainvoke([
-                SystemMessage(content="You are an intelligent SOC triage system. Provide structured routing decisions."),
-                HumanMessage(content=prompt)
-            ])
+            # Retry logic with LangChain structured output
+            for attempt in range(3):
+                try:
+                    decision = await self.routing_llm.ainvoke([
+                        SystemMessage(content="You are an intelligent SOC triage system. Provide structured routing decisions."),
+                        HumanMessage(content=prompt)
+                    ])
+                    break
+                except Exception as e:
+                    if attempt == 2:  # Last attempt
+                        raise e
+                    logger.warning(f"Routing attempt {attempt + 1} failed: {e}, retrying...")
             
             logger.info(f"Triage decision for query '{query[:50]}...': {decision.response_strategy} - {decision.reasoning}")
             
@@ -104,7 +116,7 @@ class QueryRouter:
             return decision
         
         except Exception as e:
-            logger.error(f"LangChain structured triage failed: {e}")
+            logger.error(f"LangChain structured triage failed after retries: {e}")
             # Graceful fallback to single agent strategy
             return RoutingDecision(
                 response_strategy="single_agent",
@@ -215,6 +227,82 @@ You are an intelligent SOC triage system. Your job is to determine the optimal r
 
 Focus on matching USER INTENT to AGENT EXPERTISE, not user keywords to agent tools.
 """
+
+    def _is_true_followup_query(self, query: str, context_hint: str, active_agent: AgentRole) -> bool:
+        """
+        Determine if this is a true follow-up to the previous conversation 
+        or a new cybersecurity topic that should be routed based on content.
+        
+        Args:
+            query: Current user query
+            context_hint: Previous conversation context
+            active_agent: Currently active agent
+            
+        Returns:
+            True if this is a follow-up, False if it's a new topic
+        """
+        query_lower = query.lower()
+        
+        # Strong follow-up indicators - these should stay with the same agent
+        strong_followup_phrases = [
+            # Direct references to previous conversation
+            "how do i", "how can i", "what's the next step", "next step",
+            "how to", "walk me through", "guide me through", "show me how",
+            "what should i do", "how should i", "can you help me",
+            
+            # Continuation words
+            "also", "additionally", "furthermore", "and then", "after that",
+            "what about", "what if", "but how", "but what",
+            
+            # Clarification requests
+            "can you explain", "what does that mean", "how does that work",
+            "tell me more", "elaborate", "clarify", "expand on",
+            
+            # Implementation questions
+            "how do i implement", "how do i configure", "how do i set up",
+            "where do i find", "which tool", "what command",
+        ]
+        
+        # New topic indicators - these should be routed to appropriate specialists
+        new_topic_phrases = [
+            # Compliance topics
+            "gdpr", "hipaa", "pci-dss", "compliance", "regulation", "audit",
+            "policy", "governance", "legal", "privacy law",
+            
+            # Prevention/architecture topics  
+            "secure my network", "security architecture", "best practices",
+            "vulnerability management", "patch management", "security controls",
+            "firewall", "encryption", "authentication",
+            
+            # Threat intelligence topics
+            "threat intelligence", "threat actor", "campaign analysis",
+            "malware analysis", "threat hunting", "indicators of compromise",
+            
+            # General "what is" questions about different domains
+            "what is nist", "what is iso", "what is zero trust",
+            "tell me about", "explain", "what are the", "define"
+        ]
+        
+        # Check for strong follow-up indicators
+        has_followup_phrase = any(phrase in query_lower for phrase in strong_followup_phrases)
+        
+        # Check for new topic indicators
+        has_new_topic_phrase = any(phrase in query_lower for phrase in new_topic_phrases)
+        
+        # Short queries are more likely to be follow-ups
+        is_short_query = len(query.split()) <= 10
+        
+        # Determine result
+        if has_followup_phrase and not has_new_topic_phrase:
+            return True  # Clear follow-up
+        elif has_new_topic_phrase:
+            return False  # Clear new topic
+        elif is_short_query and has_followup_phrase:
+            return True  # Short follow-up question
+        elif len(query.split()) <= 5:
+            return True  # Very short queries are usually follow-ups
+        else:
+            return False  # Default to new topic for longer, unclear queries
 
     async def _is_cybersecurity_related(self, query: str) -> bool:
         """

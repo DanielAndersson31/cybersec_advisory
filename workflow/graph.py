@@ -100,14 +100,14 @@ class CybersecurityTeamGraph:
             workflow.add_node("rag_quality", self.nodes.check_rag_quality)
         
         # Define the flow
-        workflow.set_entry_point("check_context")
+        workflow.set_entry_point("analyze")
         
-        # After context check, go to analysis
-        workflow.add_edge("check_context", "analyze")
+        # Direct routing from analysis to context check
+        workflow.add_edge("analyze", "check_context")
         
-        # After analysis, route based on strategy
+        # After context check, route based on strategy
         workflow.add_conditional_edges(
-            "analyze",
+            "check_context",
             self._route_by_strategy,
             {
                 "direct": "direct_response",
@@ -228,19 +228,19 @@ class CybersecurityTeamGraph:
         return "finish"
     
     @observe(name="team_response")
-    async def get_team_response(self, initial_state: dict, thread_id: str = "default", conversation_history: list = None) -> dict:
+    async def get_team_response(self, query: str, thread_id: str = "default", conversation_history: list = None) -> dict:
         """
         Get a response from the cybersecurity team.
         
         Args:
-            initial_state: The initial state for this turn, including query and any persisted context
+            query: User query
             thread_id: Conversation thread ID
             conversation_history: List of previous conversation messages
             
         Returns:
             Team's response
         """
-        logger.info(f"--- Running New Workflow --- Query: '{initial_state.get('query')}' --- Thread: {thread_id} ---")
+        logger.info(f"--- Running New Workflow --- Query: '{query}' --- Thread: {thread_id} ---")
         # Check if workflow has been compiled
         if self.app is None:
             raise RuntimeError(
@@ -249,9 +249,9 @@ class CybersecurityTeamGraph:
             )
         
         try:
-            # ---> FIX: Merge the passed initial_state with the default state structure <---
-            state = {
-                "query": initial_state.get("query"),
+            # Initialize state
+            initial_state = {
+                "query": query,
                 "thread_id": thread_id,
                 "response_strategy": None,
                 "estimated_complexity": None,
@@ -267,15 +267,12 @@ class CybersecurityTeamGraph:
                 "rag_relevance_score": None,
                 "error_count": 0,
                 "last_error": None,
-                "conversation_history": conversation_history or [],
-                # Carry over persisted context
-                "active_agent": initial_state.get("active_agent"),
-                "conversation_context": initial_state.get("conversation_context")
+                "conversation_history": conversation_history or []
             }
             
             # Run the workflow
             config = {"configurable": {"thread_id": thread_id}}
-            result = await self.app.ainvoke(state, config)
+            result = await self.app.ainvoke(initial_state, config)
             
             return result
             
@@ -310,8 +307,8 @@ class CybersecurityTeamGraph:
             return None
         
         config = {"configurable": {"thread_id": thread_id}}
-        snapshot = await self.app.aget_state(config)
-        return snapshot
+        state = await self.app.aget_state(config)
+        return state.values if state else None
     
     async def update_state(self, thread_id: str, updates: dict):
         """
