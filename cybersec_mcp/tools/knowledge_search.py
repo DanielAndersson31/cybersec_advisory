@@ -112,6 +112,12 @@ class KnowledgeSearchTool(BaseTool):
             all_results.sort(key=lambda x: x["score"], reverse=True)
             top_results = all_results[:limit]
             
+            # ---> FIX: If no results in specific domain, fallback to all domains <---
+            if not top_results and domain and len(domains_to_search) == 1:
+                logger.warning(f"No results found in '{domain}'. Falling back to search all domains.")
+                # Clear the specific domain and re-run the search across all collections
+                return await self.search(query=query, domain=None, limit=limit)
+
             # Format results into our Pydantic model
             formatted_results = [KnowledgeResult(**result) for result in top_results]
 

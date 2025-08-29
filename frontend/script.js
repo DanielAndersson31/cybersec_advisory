@@ -304,7 +304,7 @@ document.addEventListener("DOMContentLoaded", () => {
         {
           role: "assistant",
           content:
-            "Welcome to **CyberGuard Enterprise Security Advisory Platform**.\n\nI'm your cybersecurity consultant, ready to provide expert guidance on:\n\n- **Risk Assessment** - Identify and evaluate security vulnerabilities\n- **Incident Response** - Emergency response and containment strategies  \n- **Compliance & Governance** - Regulatory requirements and frameworks\n- **Security Architecture** - Infrastructure design and implementation\n\nOur system will automatically connect you with the most appropriate security specialist based on your inquiry. You can use **markdown formatting** in your questions for better structure.\n\n### Test Markdown\n\nTry asking: *What are common cybersecurity threats?*\n\nOr use `code formatting` and **bold text** in your messages!",
+            "Welcome to **CyberGuard Enterprise Security Advisory Platform**.\n\nI'm your cybersecurity consultant, ready to provide expert guidance on:\n\n- **Risk Assessment** - Identify and evaluate security vulnerabilities\n- **Incident Response** - Emergency response and containment strategies  \n- **Compliance & Governance** - Regulatory requirements and frameworks\n- **Security Architecture** - Infrastructure design and implementation\n\nOur system will automatically connect you with the most appropriate security specialist based on your inquiry. You can use **markdown formatting** in your questions for better structure.",
         },
       ],
       title: "New Security Consultation",

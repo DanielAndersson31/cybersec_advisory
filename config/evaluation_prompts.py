@@ -1,19 +1,21 @@
 """
 Enhanced evaluation prompts for role-first cybersecurity agent system.
-Tailored to evaluate agent-specific expertise and appropriate tool usage.
+Updated to require markdown formatting in structured responses while maintaining professional tone.
 """
 
 # --- System Message Personas ---
 EVALUATOR_SYSTEM_PERSONA = """You are an expert cybersecurity evaluator with deep knowledge of SOC operations and agent specializations. 
-Provide structured quality assessments that consider both technical accuracy and appropriate role boundaries."""
+Provide structured quality assessments using markdown formatting for clarity. Use headers, bullet points, and proper formatting to make your evaluation scannable and actionable."""
 
-GROUNDEDNESS_SYSTEM_PERSONA = "You are an expert at evaluating whether cybersecurity responses are grounded in tool-retrieved data and evidence."
+GROUNDEDNESS_SYSTEM_PERSONA = """You are an expert at evaluating whether cybersecurity responses are grounded in tool-retrieved data and evidence.
+Structure your analysis using markdown formatting with clear headers and bullet points."""
 
-RELEVANCE_SYSTEM_PERSONA = "You are an expert at evaluating the relevance of cybersecurity context to user security queries."
+RELEVANCE_SYSTEM_PERSONA = """You are an expert at evaluating the relevance of cybersecurity context to user security queries.
+Provide your assessment using markdown formatting with clear sections for easy review."""
 
 ENHANCER_SYSTEM_PERSONA = """You are a senior cybersecurity advisor tasked with improving specialist team responses.
 You understand each agent's role and will enhance responses while maintaining appropriate specialization boundaries.
-CRITICAL: Provide ONLY the improved response content. Do not add prefixes like "Enhanced Response:" or metadata."""
+CRITICAL: Provide ONLY the improved response content using proper markdown formatting. Do not add prefixes like "Enhanced Response:" or metadata."""
 
 # --- Agent-Specific Evaluation Criteria ---
 AGENT_EVALUATION_CRITERIA = {
@@ -82,6 +84,7 @@ AGENT_EVALUATION_CRITERIA = {
 # --- Enhanced Validation Prompt ---
 VALIDATE_RESPONSE_PROMPT = """
 You are evaluating a cybersecurity specialist's response. Use role-specific criteria to assess quality and appropriateness.
+Structure your evaluation using proper markdown formatting with headers, bullet points, and clear sections.
 
 **Query Context:**
 {query}
@@ -96,32 +99,61 @@ You are evaluating a cybersecurity specialist's response. Use role-specific crit
 {evaluation_criteria}
 
 **Evaluation Framework:**
+Provide your assessment using the following markdown structure:
 
-1. **Role Appropriateness (25%)**
+## **1. Role Appropriateness (25%)**
    - Does the response align with this agent's primary expertise area?
    - Are they staying within their role boundaries or overstepping into other specialists' domains?
    - Is the level of technical depth appropriate for their role?
 
-2. **Tool Usage Assessment (20%)**  
+**Score:** X/10
+**Analysis:** [Your detailed assessment]
+
+## **2. Tool Usage Assessment (20%)**  
    - Did they use appropriate tools for their role when needed?
    - Are they using tools within their permitted set?
    - Did they gather sufficient data before providing recommendations?
    - Was tool usage necessary, or could expertise alone suffice?
 
-3. **Technical Accuracy (25%)**
+**Score:** X/10
+**Analysis:** [Your detailed assessment]
+
+## **3. Technical Accuracy (25%)**
    - Is the cybersecurity information technically accurate?
    - Are recommendations feasible and implementable?
    - Does the response demonstrate appropriate domain expertise?
 
-4. **Actionability & Clarity (15%)**
+**Score:** X/10
+**Analysis:** [Your detailed assessment]
+
+## **4. Actionability & Clarity (15%)**
    - Are recommendations specific and actionable?
    - Is guidance prioritized appropriately?
    - Is the response structure clear and scannable?
 
-5. **Collaboration & Handoffs (15%)**
+**Score:** X/10
+**Analysis:** [Your detailed assessment]
+
+## **5. Collaboration & Handoffs (15%)**
    - Did they appropriately recommend handoffs to other specialists when needed?
    - Do they stay in their lane while providing value to the team?
    - Are collaboration notes helpful for other agents?
+
+**Score:** X/10
+**Analysis:** [Your detailed assessment]
+
+## **Overall Assessment:**
+**Total Score:** X/10
+**Quality Threshold Met:** Pass/Fail
+**Summary:** [Brief overall assessment]
+
+### **Key Strengths:**
+- [Bullet point]
+- [Bullet point]
+
+### **Areas for Improvement:**
+- [Bullet point]
+- [Bullet point]
 
 **Context Considerations:**
 - For follow-up questions, evaluate conversation continuity and context awareness
@@ -141,6 +173,7 @@ Provide detailed feedback on role adherence, tool usage appropriateness, and spe
 # --- Enhanced Enhancement Prompt ---
 ENHANCE_RESPONSE_PROMPT = """
 You are improving a cybersecurity specialist's response while maintaining their role boundaries and expertise focus.
+Provide the enhanced response using proper markdown formatting for structure and readability.
 
 **Agent Role:** {agent_type}
 **Original Query:** {query}
@@ -151,7 +184,7 @@ You are improving a cybersecurity specialist's response while maintaining their 
 {role_context}
 
 **CRITICAL INSTRUCTIONS:**
-1. **Output Format**: Provide ONLY the improved response content. Do not add prefixes, headers, or metadata.
+1. **Output Format**: Provide ONLY the improved response content using markdown formatting. Do not add prefixes, headers, or metadata.
 2. **User-Actionable Guidance**: Do NOT reference internal tools in recommendations. Translate to real user actions:
    - ❌ "Use IOC analysis tool" → ✅ "Submit suspicious files to VirusTotal.com"
    - ❌ "Run exposure checker" → ✅ "Check HaveIBeenPwned.com for email compromise"
@@ -164,6 +197,7 @@ You are improving a cybersecurity specialist's response while maintaining their 
 3. **Specialist Value**: Ensure the response delivers unique value from this agent's perspective
 4. **Collaboration**: Include appropriate handoff suggestions to other specialists when needed
 5. **Natural Tone**: Write as the specialist would, conversationally and professionally
+6. **Markdown Structure**: Use proper headers, bullet points, and formatting for clarity
 
 **Specific Focus Areas by Role:**
 - **Incident Response**: Action-oriented, urgent, containment-focused with real-world steps
@@ -172,12 +206,13 @@ You are improving a cybersecurity specialist's response while maintaining their 
 - **Compliance**: Regulatory-precise, governance-focused, policy-oriented guidance
 - **Coordinator**: Executive-level, synthesized, prioritized recommendations
 
-Address all feedback while maintaining the agent's specialized perspective. The enhanced response should read naturally as if the specialist wrote it perfectly the first time.
+Address all feedback while maintaining the agent's specialized perspective. The enhanced response should use proper markdown formatting and read naturally as if the specialist wrote it perfectly the first time.
 """
 
 # --- Enhanced Groundedness Prompt ---
 CHECK_GROUNDEDNESS_PROMPT = """
 Evaluate whether this cybersecurity response is properly grounded in the provided tool data and evidence.
+Structure your analysis using markdown formatting for clarity.
 
 **Tool Context/Evidence:**
 {context}
@@ -186,12 +221,34 @@ Evaluate whether this cybersecurity response is properly grounded in the provide
 {answer}
 
 **Groundedness Criteria for Cybersecurity:**
+Provide your assessment using this markdown structure:
 
-1. **Data-Driven Claims**: Are security assessments based on actual tool outputs rather than general knowledge?
-2. **IOC Analysis**: Are threat indicators properly analyzed using tool data?
-3. **Vulnerability Details**: Are CVE details, CVSS scores, and patch info from authoritative sources?
-4. **Threat Intelligence**: Are actor attributions and TTPs backed by intelligence feeds?
-5. **Compliance Guidance**: Are regulatory requirements cited from official guidance tools?
+## **Analysis Framework:**
+
+### **1. Data-Driven Claims**
+Are security assessments based on actual tool outputs rather than general knowledge?
+**Assessment:** [Your analysis]
+
+### **2. IOC Analysis**
+Are threat indicators properly analyzed using tool data?
+**Assessment:** [Your analysis]
+
+### **3. Vulnerability Details**
+Are CVE details, CVSS scores, and patch info from authoritative sources?
+**Assessment:** [Your analysis]
+
+### **4. Threat Intelligence**
+Are actor attributions and TTPs backed by intelligence feeds?
+**Assessment:** [Your analysis]
+
+### **5. Compliance Guidance**
+Are regulatory requirements cited from official guidance tools?
+**Assessment:** [Your analysis]
+
+## **Evaluation Results:**
+**Groundedness Status:** Fully Grounded / Partially Grounded / Not Grounded
+**Supporting Evidence:** [Key evidence from tools]
+**Unsupported Claims:** [If any]
 
 **Evaluation Standards:**
 - **Fully Grounded**: All security claims directly supported by provided context
@@ -202,13 +259,12 @@ Evaluate whether this cybersecurity response is properly grounded in the provide
 - General cybersecurity best practices may not require tool grounding
 - Specific threat assessments, CVE details, and compliance requirements must be grounded
 - Agent expertise can supplement but not replace tool-provided data for specific queries
-
-Assess whether security-specific claims are appropriately supported by tool evidence.
 """
 
 # --- Enhanced Relevance Prompt ---
 CHECK_RELEVANCE_PROMPT = """
 Evaluate the relevance of retrieved cybersecurity context for answering the user's security query.
+Structure your evaluation using markdown formatting.
 
 **User Security Query:**
 {query}
@@ -217,12 +273,35 @@ Evaluate the relevance of retrieved cybersecurity context for answering the user
 {context}
 
 **Relevance Criteria for Cybersecurity Context:**
+Provide your assessment using this markdown structure:
 
-1. **Threat Relevance**: Does context address the specific threats or indicators mentioned?
-2. **Technical Alignment**: Is the technical depth and focus appropriate for the query?
-3. **Temporal Relevance**: Is the context current enough for the security concern?
-4. **Actionable Information**: Does context provide information needed for security decisions?
-5. **Scope Match**: Does context cover the right security domain (compliance, threats, vulnerabilities, etc.)?
+## **Analysis Framework:**
+
+### **1. Threat Relevance**
+Does context address the specific threats or indicators mentioned?
+**Assessment:** [Your analysis]
+
+### **2. Technical Alignment**
+Is the technical depth and focus appropriate for the query?
+**Assessment:** [Your analysis]
+
+### **3. Temporal Relevance**
+Is the context current enough for the security concern?
+**Assessment:** [Your analysis]
+
+### **4. Actionable Information**
+Does context provide information needed for security decisions?
+**Assessment:** [Your analysis]
+
+### **5. Scope Match**
+Does context cover the right security domain (compliance, threats, vulnerabilities, etc.)?
+**Assessment:** [Your analysis]
+
+## **Evaluation Results:**
+**Relevance Level:** Highly Relevant / Moderately Relevant / Low Relevance / Not Relevant
+**Relevance Score:** X/10
+**Key Relevant Elements:** [Bullet points]
+**Missing Information:** [If any]
 
 **Evaluation Levels:**
 - **Highly Relevant**: Context directly addresses core security concerns in query
@@ -235,8 +314,6 @@ Evaluate the relevance of retrieved cybersecurity context for answering the user
 - Compliance queries need specific regulatory framework details
 - Incident response queries need actionable, immediate information
 - Prevention queries benefit from strategic, architectural context
-
-Assess how well the context enables comprehensive answering of the security query.
 """
 
 # --- Agent Role Context Templates ---

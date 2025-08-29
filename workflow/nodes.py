@@ -14,6 +14,9 @@ from config.agent_config import AgentRole
 from agents.factory import AgentFactory
 from cybersec_mcp.cybersec_tools import CybersecurityToolkit
 from workflow.schemas import ContextContinuityCheck
+from cybersec_mcp.tools.web_search import WebSearchResponse
+
+
 
 
 logger = logging.getLogger(__name__)
@@ -151,6 +154,32 @@ Respond with structured analysis of web search necessity.
             "reasoning": "No temporal indicators or explicit web search requests",
             "trigger_phrase": None
         }
+
+    def _format_web_search_results(self, search_response: WebSearchResponse) -> str:
+        """
+        Format web search results in a way that's easy for the LLM to understand and use.
+        """
+        if not search_response.results:
+            return "No relevant results found for your search query."
+        
+        formatted_results = []
+        for i, result in enumerate(search_response.results, 1):
+            formatted_results.append(f"""
+Result {i}:
+Title: {result.title}
+URL: {result.url}
+Content: {result.content[:300]}{'...' if len(result.content) > 300 else ''}
+""")
+        
+        return f"""
+Web search results for: "{search_response.query}"
+Enhanced query used: "{search_response.enhanced_query}"
+Time filters applied: {search_response.time_filter_applied or 'None'}
+
+{''.join(formatted_results)}
+
+Please use this information to provide an accurate and helpful response to the user's question.
+"""
 
     @observe(name="analyze_query")
     async def analyze_query(self, state: WorkflowState) -> WorkflowState:
@@ -442,6 +471,13 @@ When to use web search:
 - Facts that need to be up-to-date
 - Any topic where current/real-time information is important
 
+When you receive web search results:
+1. Read through the provided search results carefully
+2. Extract the most relevant and current information
+3. Provide a clear, accurate response based on the search results
+4. If the results seem outdated or irrelevant, mention this to the user
+5. Always cite the source when providing specific information
+
 The web_search_tool is now generic and works for any type of query - you control the focus through your search terms.
 """
             
@@ -467,14 +503,18 @@ The web_search_tool is now generic and works for any type of query - you control
                     
                     try:
                         if tool_name == "web_search":
-                            logger.info(f"LLM generated tool query for web_search: '{tool_args.get('query')}'")
+                            tool_args['max_results'] = 5  # Always fetch 5 results
+                            logger.info(f"LLM generated tool query for web_search: '{tool_args.get('query')}' with max_results={tool_args['max_results']}")
                             tool_result = await self.web_search_tool.ainvoke(tool_args)
+                            logger.info(f"Web search returned {tool_result.total_results} results")
+                            # Format web search results in a more LLM-friendly way
+                            formatted_result = self._format_web_search_results(tool_result)
                         else:
                             # For any other tools that might be called
-                            tool_result = f"Tool {tool_name} executed successfully"
+                            formatted_result = f"Tool {tool_name} executed successfully"
                         
                         messages.append(ToolMessage(
-                            content=str(tool_result),
+                            content=formatted_result,
                             tool_call_id=tool_id
                         ))
                     

@@ -235,7 +235,16 @@ class VectorStoreManager:
                 return []
             else:
                 # Log other errors with full details
-                logger.exception(f"Search failed in collection '{collection_name}': {e}")
+                logger.error(f"Search failed in collection '{collection_name}' for query: '{query}'")
+                if hasattr(e, 'response') and e.response is not None:
+                    try:
+                        # Try to get detailed error content from the HTTP response
+                        raw_response_content = await e.response.read()
+                        logger.error(f"Raw response from Qdrant: {raw_response_content.decode()}")
+                    except Exception as read_exc:
+                        logger.error(f"Could not read raw response from Qdrant: {read_exc}")
+                
+                logger.exception(f"Search exception details for query '{query}': {e}")
                 return []
 
     async def search_multiple_collections(

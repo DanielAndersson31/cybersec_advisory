@@ -273,6 +273,11 @@ class BaseSecurityAgent(ABC):
             return f"Error: Tool '{tool_name}' is not available in the toolkit."
 
         try:
+            # ---> FIX: For web_search, ensure max_results is set to 5 <---
+            if tool_name == "web_search":
+                kwargs['max_results'] = 5  # Always fetch 5 results
+                logger.info(f"🔧 {self.name}: Adjusted web_search max_results to {kwargs['max_results']}")
+
             # Asynchronously invoke the tool with provided arguments
             logger.info(f"🔧 {self.name}: EXECUTING tool '{tool_name}' with args: {kwargs}")
             result = await tool.ainvoke(kwargs)
